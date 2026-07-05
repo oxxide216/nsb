@@ -190,6 +190,21 @@ static void parser_destroy(Parser *parser) {
   // Empty for now
 }
 
+static void target_build_info_destroy(TargetBuildInfo *info) {
+  free(info->file.ptr);
+  free(info->srcs_expanded.ptr);
+  free(info->deps_expanded.ptr);
+  if (info->srcs.items)
+    free(info->srcs.items);
+  free(info->compiler.ptr);
+  free(info->cflags.ptr);
+  free(info->ldflags.ptr);
+  free(info->incpath.ptr);
+  if (info->dep_targets.items)
+    free(info->dep_targets.items);
+  free(info);
+}
+
 static void build_config_destroy(BuildConfig *build_config) {
   if (build_config->content.ptr)
     free(build_config->content.ptr);
@@ -197,9 +212,16 @@ static void build_config_destroy(BuildConfig *build_config) {
     free(build_config->vars.items);
   for (u32 i = 0; i < build_config->targets.len; ++i)
     if (build_config->targets.items[i].info)
-      free(build_config->targets.items[i].info);
+      target_build_info_destroy(build_config->targets.items[i].info);
   if (build_config->targets.items)
     free(build_config->targets.items);
+}
+
+static void all_files_rec_destroy(void) {
+  for (u32 i = 0; i < all_files_rec.len; ++i)
+    free(all_files_rec.items[i].ptr);
+  if (all_files_rec.items)
+    free(all_files_rec.items);
 }
 
 static Str parse_ident(Parser *parser) {
@@ -239,7 +261,8 @@ static Str parse_until(Parser *parser, char _char) {
 }
 
 static void skip_whitespace(Parser *parser) {
-  while (isspace(*CUR(parser))) {
+  while (parser->current < parser->content.len &&
+         isspace(*CUR(parser))) {
     if (*CUR(parser) == '\n') {
       ++parser->row;
       parser->col = 0;
@@ -603,7 +626,9 @@ static Strs list_directory_existing_rec(char *path) {
           DA_APPEND(*result, full_path);
         else
           free(full_path.ptr);
-      }
+        } else {
+          free(full_path.ptr);
+        }
     }
 
     closedir(dir);
@@ -612,13 +637,6 @@ static Strs list_directory_existing_rec(char *path) {
   Strs result = {0};
   list_directory_existing_rec_internal(&result, (Str) { path, strlen(path) });
   return result;
-}
-
-static void all_files_rec_destroy(void) {
-  for (u32 i = 0; i < all_files_rec.len; ++i)
-    free(all_files_rec.items[i].ptr);
-  if (all_files_rec.items)
-    free(all_files_rec.items);
 }
 
 static bool glob_matches(Str glob, Str str) {
@@ -726,7 +744,10 @@ static Strs split(Str str, char sep) {
 
 static TargetBuildInfo *get_target_build_info(BuildConfig *build_config, Target *target) {
   TargetBuildInfo *info = malloc(sizeof(TargetBuildInfo));
-  info->file = get_target_full_file(expand_value(build_config, target->file), target->type);
+  memset(info, 0, sizeof(TargetBuildInfo));
+  Str file_expanded = expand_value(build_config, target->file);
+  info->file = get_target_full_file(file_expanded, target->type);
+  free(file_expanded.ptr);
   info->type = target->type;
   info->srcs_expanded = expand_value(build_config, target->src_pattern);
   info->deps_expanded = expand_value(build_config, target->deps_pattern);
@@ -824,7 +845,7 @@ static void make_directory(Str path, bool is_file_path) {
   }
 
   if (!is_file_path && anchor < path.len) {
-    DA_APPEND_MANY(sb, path.ptr + anchor, i - anchor);
+    DA_APPEND_MANY(sb, path.ptr + anchor, path.len - anchor);
     sb_append_char(&sb, '\0');
     if (!dir_exists_cstr(sb.items)) {
       if (config.verbose)
