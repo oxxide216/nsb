@@ -1,0 +1,16 @@
+cflags = -Wall -Wextra
+ldflags = -lm
+build_dir = build
+
+[test]
+src = src/main.c
+deps = lib
+cflags = $cflags
+ldflags = $ldflags
+incpath = $build_dir
+
+[lib]
+type = static_lib
+src = src/lib.c
+cflags = $cflags
+incpath = $build_dir/lib
