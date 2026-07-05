@@ -93,6 +93,7 @@ typedef struct {
 } Str;
 
 typedef Da(Str) Strs;
+typedef Da(Strs) Strss;
 
 typedef Da(char) StringBuilder;
 
@@ -146,6 +147,7 @@ struct TargetBuildInfo {
   Str        srcs_expanded;
   Str        deps_expanded;
   Strs       srcs;
+  Strss      header_deps;
   Str        compiler;
   Str        cflags;
   Str        ldflags;
@@ -196,6 +198,15 @@ static void target_build_info_destroy(TargetBuildInfo *info) {
   free(info->deps_expanded.ptr);
   if (info->srcs.items)
     free(info->srcs.items);
+  for (u32 i = 0; i < info->header_deps.len; ++i) {
+    Strs *header_deps = info->header_deps.items + i;
+    for (u32 j = 0; j < header_deps->len; ++j)
+      free(header_deps->items[j].ptr);
+    if (header_deps->items)
+      free(header_deps->items);
+  }
+  if (info->header_deps.items)
+    free(info->header_deps.items);
   free(info->compiler.ptr);
   free(info->cflags.ptr);
   free(info->ldflags.ptr);
@@ -742,6 +753,121 @@ static Strs split(Str str, char sep) {
   return result;
 }
 
+static void sb_append_str(StringBuilder *sb, Str str) {
+  DA_APPEND_MANY(*sb, str.ptr, str.len);
+}
+
+static void sb_append_char(StringBuilder *sb, char _char) {
+  DA_APPEND(*sb, _char);
+}
+
+static void sb_append_strs(StringBuilder *sb, Strs *strs) {
+  for (u32 i = 0; i < strs->len; ++i) {
+    sb_append_char(sb, ' ');
+    sb_append_str(sb, strs->items[i]);
+  }
+}
+
+static bool mem_eq(void *a, void *b, u64 n) {
+  for (u32 i = 0; i < n; ++i)
+    if (((u8 *) a)[i] != ((u8 *) b)[i])
+      return false;
+
+  return true;
+}
+
+static Str get_header_full_path(Str path, Str includer, Str cflags) {
+  while (includer.len > 0 && includer.ptr[includer.len - 1] != '/')
+    --includer.len;
+
+  StringBuilder sb = {0};
+  sb_append_str(&sb, includer);
+  sb_append_str(&sb, path);
+  sb_append_char(&sb, '\0');
+
+  if (file_exists_cstr(sb.items))
+    return (Str) { sb.items, sb.len - 1 };
+
+  sb.len = 0;
+
+  u32 i = 0;
+  while (i < cflags.len) {
+    if (cflags.ptr[i] == '-' && i + 1 < cflags.len && cflags.ptr[i + 1] == 'I') {
+      i += 2;
+
+      while (i < cflags.len && isspace(cflags.ptr[i]))
+        ++i;
+
+      u32 anchor = i;
+
+      while (i < cflags.len && !isspace(cflags.ptr[i]))
+        ++i;
+
+      sb_append_str(&sb, (Str) { cflags.ptr + anchor, i - anchor });
+      if (cflags.ptr[i - 1] != '/')
+        sb_append_char(&sb, '/');
+      sb_append_str(&sb, path);
+      sb_append_char(&sb, '\0');
+
+      if (file_exists_cstr(sb.items))
+        return (Str) { sb.items, sb.len - 1 };
+    }
+
+    ++i;
+  }
+
+  free(sb.items);
+
+  return (Str) { NULL, (u32) -1 };
+}
+
+static Strs parse_header_deps(Str src, Str cflags) {
+  void parse_header_deps_internal(Strs *result, Str src, Str cflags) {
+    char *str_cstr = malloc(src.len + 1);
+    memcpy(str_cstr, src.ptr, src.len);
+    str_cstr[src.len] = '\0';
+    Str content = read_file(str_cstr);
+    free(str_cstr);
+    if (content.len == (u32) -1)
+      return;
+
+    u32 i = 0;
+    while (i < content.len) {
+      if (i + 8 < content.len && mem_eq(content.ptr + i, "#include", 8)) {
+        i += 8;
+
+        while (i < content.len && isspace(content.ptr[i]))
+          ++i;
+
+        if (i < content.len && content.ptr[i] == '"') {
+          u32 anchor = ++i;
+
+          while (i < content.len && content.ptr[i] != '"')
+            ++i;
+
+          Str path = {
+            content.ptr + anchor,
+            i - anchor,
+          };
+          Str full_path = get_header_full_path(path, src, cflags);
+          if (full_path.len != (u32) -1) {
+            DA_APPEND(*result, full_path);
+            parse_header_deps_internal(result, full_path, cflags);
+          }
+        }
+      }
+
+      ++i;
+    }
+
+    free(content.ptr);
+  }
+
+  Strs result = {0};
+  parse_header_deps_internal(&result, src, cflags);
+  return result;
+}
+
 static TargetBuildInfo *get_target_build_info(BuildConfig *build_config, Target *target) {
   TargetBuildInfo *info = malloc(sizeof(TargetBuildInfo));
   memset(info, 0, sizeof(TargetBuildInfo));
@@ -761,6 +887,16 @@ static TargetBuildInfo *get_target_build_info(BuildConfig *build_config, Target 
 
   for (u32 i = 0; i < info->srcs.len; ++i) {
     Target *dep_target = NULL;
+
+    Strs header_deps = parse_header_deps(info->srcs.items[i], info->cflags);
+    DA_APPEND(info->header_deps, header_deps);
+
+    if (config.debug) {
+      printf("[INFO] %.*s header dependencies:\n",
+             info->srcs.items[i].len, info->srcs.items[i].ptr);
+      for (u32 j = 0; j < header_deps.len; ++j)
+        printf("  -> %.*s\n", header_deps.items[j].len, header_deps.items[j].ptr);
+    }
 
     for (u32 j = 0; j < build_config->targets.len; ++j) {
       if (str_eq(build_config->targets.items[j].file, info->srcs.items[i])) {
@@ -793,21 +929,6 @@ static TargetBuildInfo *get_target_build_info(BuildConfig *build_config, Target 
     free(deps.items);
 
   return info;
-}
-
-static void sb_append_str(StringBuilder *sb, Str str) {
-  DA_APPEND_MANY(*sb, str.ptr, str.len);
-}
-
-static void sb_append_char(StringBuilder *sb, char _char) {
-  DA_APPEND(*sb, _char);
-}
-
-static void sb_append_strs(StringBuilder *sb, Strs *strs) {
-  for (u32 i = 0; i < strs->len; ++i) {
-    sb_append_char(sb, ' ');
-    sb_append_str(sb, strs->items[i]);
-  }
 }
 
 static Str src_to_obj_path(TargetBuildInfo *target_info, Str src) {
@@ -901,7 +1022,9 @@ static bool needs_rebuild_target_refs(TargetRefs *srcs, Str dest) {
 
 static char *get_target_obj_build_cmd(TargetBuildInfo *info, u32 index) {
   Str obj_path = src_to_obj_path(info, info->srcs.items[index]);
-  if (!info->rebuild && !needs_rebuild(info->srcs.items[index], obj_path)) {
+  if (!info->rebuild &&
+      !needs_rebuild(info->srcs.items[index], obj_path) &&
+      !needs_rebuild_many_srcs(info->header_deps.items + index, obj_path)) {
     free(obj_path.ptr);
     return NULL;
   }

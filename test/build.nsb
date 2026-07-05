@@ -1,9 +1,9 @@
-cflags = -Wall -Wextra
+cflags = -Wall -Wextra -Ilib/include
 ldflags = -lm
 build_dir = build
 
 [test]
-src = src/main.c
+src = src/*.c
 deps = lib
 cflags = $cflags
 ldflags = $ldflags
@@ -11,6 +11,6 @@ incpath = $build_dir
 
 [lib]
 type = static_lib
-src = src/lib.c
+src = lib/src/*.c
 cflags = $cflags
 incpath = $build_dir/lib
