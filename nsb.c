@@ -343,6 +343,10 @@ static Str choose_compiler(void) {
   return STR_LIT("cc");
 }
 
+static Str get_executable_extension(void) {
+  return STR_LIT("");
+}
+
 static Str get_static_lib_extension(void) {
   return STR_LIT(".a");
 }
@@ -705,9 +709,12 @@ static Strs match_glob(Str glob) {
 
 static Str get_target_full_file(Str file, Type type) {
   if (type == TypeExecutable) {
-    Str full_file = file;
+    Str ext = get_executable_extension();
+    Str full_file;
+    full_file.len = file.len + ext.len;
     full_file.ptr = malloc(full_file.len);
     memcpy(full_file.ptr, file.ptr, file.len);
+    memcpy(full_file.ptr + file.len, ext.ptr, ext.len);
     return full_file;
   } else if (type == TypeStaticLib) {
     Str ext = get_static_lib_extension();
