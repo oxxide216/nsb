@@ -1239,12 +1239,13 @@ static void create_gitignore_file(Str prefix) {
   free(full_path.ptr);
 }
 
-static void build(BuildConfig *build_config, Target *target) {
+static bool build(BuildConfig *build_config, Target *target) {
   TargetBuildInfo *info = get_target_build_info(build_config, target);
   target->info = info;
 
   for (u32 i = 0; i < info->dep_targets.len; ++i)
-    build(build_config, info->dep_targets.items[i]);
+    if (!build(build_config, info->dep_targets.items[i]))
+      return false;
 
   if (((info->type == TypeExecutable || info->type == TypeSharedLib) &&
        info->incpath.len > 0) ||
@@ -1280,12 +1281,13 @@ static void build(BuildConfig *build_config, Target *target) {
       cmd = get_full_shared_lib_target_build_cmd(info);
   }
   if (!cmd)
-    return;
+    return true;
 
   if (config.verbose)
     printf("[INFO] Running %s\n", cmd);
-  system(cmd);
+  bool result = system(cmd) == 0;
   free(cmd);
+  return result;
 }
 
 i32 main(i32 argc, char **argv) {
