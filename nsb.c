@@ -1293,7 +1293,7 @@ i32 main(i32 argc, char **argv) {
 
   chdir(config.build_file_dir);
 
-  BuildConfig build_config = {};
+  BuildConfig build_config = {0};
   if (!parse_build_file(BUILD_FILE_NAME, &build_config)) {
     build_config_destroy(&build_config);
     return 1;
