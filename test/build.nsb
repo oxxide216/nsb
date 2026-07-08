@@ -1,12 +1,10 @@
-cflags = -Wall -Wextra -Ilib/include
-ldflags = -lm
+cflags = -Ilib/include
 build_dir = build
 
 [test]
 src = src/*.c
 deps = lib
 cflags = $cflags
-ldflags = $ldflags
 incpath = $build_dir
 
 [lib]

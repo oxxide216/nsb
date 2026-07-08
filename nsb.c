@@ -5,7 +5,7 @@
 #include <ctype.h>
 // TODO: Windows support
 #ifdef _WIN32
-#include <windows.h>
+#include <Windows.h>
 #else
 #include <unistd.h>
 #include <dirent.h>
@@ -13,6 +13,12 @@
 #endif
 
 #define BUILD_FILE_NAME "build.nsb"
+
+#ifdef _WIN32
+#define PATH_SEP '\\'
+#else
+#define PATH_SEP '/'
+#endif
 
 #define CUR(parser) ((parser)->content.ptr + (parser)->current)
 #define PARSE_ERROR(parser, message)        \
@@ -371,11 +377,43 @@ static Str choose_arflags(void) {
 #endif
 }
 
+static Str choose_compiler_executable_output_prefix(void) {
+#ifdef _WIN32
+  return STR_LIT("/Fe");
+#else
+  return STR_LIT("-o ");
+#endif
+}
+
+static Str choose_compiler_shared_lib_output_prefix(void) {
+#ifdef _WIN32
+  return STR_LIT("/LD /Fe");
+#else
+  return STR_LIT("-shared -o ");
+#endif
+}
+
+static Str choose_compiler_objective_output_prefix(void) {
+#ifdef _WIN32
+  return STR_LIT("/c /Fo");
+#else
+  return STR_LIT("-c -o ");
+#endif
+}
+
 static Str choose_archiver_output_prefix(void) {
 #ifdef _WIN32
   return STR_LIT("/out:");
 #else
   return STR_LIT("");
+#endif
+}
+
+static Str get_objective_extension(void) {
+#ifdef _WIN32
+  return STR_LIT(".obj");
+#else
+  return STR_LIT(".o");
 #endif
 }
 
@@ -400,6 +438,14 @@ static Str get_shared_lib_extension(void) {
   return STR_LIT(".dll");
 #else
   return STR_LIT(".so");
+#endif
+}
+
+static bool get_quote_output_file(void) {
+#ifdef _WIN32
+  return true;
+#else
+  return false;
 #endif
 }
 
@@ -486,7 +532,9 @@ static bool parse_target(Parser *parser) {
                    name.len, name.ptr);
       return false;
     }
+#ifndef _WIN32
     _Static_assert (sizeof(Target) == 160, "Target structure configuration changed");
+#endif
   }
 
   if (target.src_pattern.len == 0) {
@@ -610,7 +658,9 @@ static void dump_build_config(BuildConfig *build_config) {
     PRINT_TARGET_FIELD(target, ldflags, "ldflags");
     PRINT_TARGET_FIELD(target, arflags, "arflags");
     PRINT_TARGET_FIELD(target, incpath, "incpath");
+#ifndef _WIN32
     _Static_assert (sizeof(Target) == 160, "Target structure configuration changed");
+#endif
   }
 }
 
@@ -649,6 +699,12 @@ static Str expand_value(BuildConfig *build_config, Str value) {
 
   if (anchor < value.len)
     DA_APPEND_MANY(sb, value.ptr + anchor, value.len - anchor);
+
+#ifdef _WIN32
+  for (u32 i = 0; i < sb.len; ++i)
+    if (sb.items[i] == '/')
+      sb.items[i] = PATH_SEP;
+#endif
 
   return (Str) { sb.items, sb.len };
 }
@@ -691,60 +747,60 @@ static bool dir_exists_cstr(char *path) {
 #endif
 }
 
-static Strs list_directory_existing_rec(char *path) {
-  void list_directory_existing_rec_internal(Strs *result, Str path) {
+void list_directory_existing_rec_internal(Strs *result, Str path) {
 #ifdef _WIN32
-    char *path_prepared = malloc(path.len + 2);
-    memcpy(path_prepared, path.ptr, path.len);
-    strcpy(path_prepared + path.len, "\\*");
-    WIN32_FIND_DATA find_data;
-    HANDLE file = FindFirstFile(path_prepared, &find_data);
+  char *path_prepared = malloc(path.len + 2);
+  memcpy(path_prepared, path.ptr, path.len);
+  strcpy(path_prepared + path.len, "\\*");
+  WIN32_FIND_DATA find_data;
+  HANDLE file = FindFirstFile(path_prepared, &find_data);
 
-    do {
-      char *entry_path = find_data.cFileName;
+  do {
+    char *entry_path = find_data.cFileName;
 #else
-    DIR *dir = opendir(path.ptr);
-    if (!dir)
-      return;
+  DIR *dir = opendir(path.ptr);
+  if (!dir)
+    return;
 
-    struct dirent *entry;
-    while ((entry = readdir(dir))) {
-      char *entry_path = entry->d_name;
+  struct dirent *entry;
+  while ((entry = readdir(dir))) {
+    char *entry_path = entry->d_name;
 #endif
-      Str full_path;
-      full_path.len = path.len + (path.len > 0) + strlen(entry_path);
-      full_path.ptr = malloc(full_path.len + 1);
-      memcpy(full_path.ptr, path.ptr, path.len);
-      if (path.len > 0)
-        full_path.ptr[path.len] = '/';
-      strcpy(full_path.ptr + path.len + (path.len > 0), entry_path);
-      full_path.ptr[full_path.len] = '\0';
+    Str full_path;
+    full_path.len = path.len + (path.len > 0) + strlen(entry_path);
+    full_path.ptr = malloc(full_path.len + 1);
+    memcpy(full_path.ptr, path.ptr, path.len);
+    if (path.len > 0)
+      full_path.ptr[path.len] = PATH_SEP;
+    strcpy(full_path.ptr + path.len + (path.len > 0), entry_path);
+    full_path.ptr[full_path.len] = '\0';
 
-      if (strcmp(entry_path, ".") != 0 &&
-          strcmp(entry_path, "..") != 0) {
+    if (strcmp(entry_path, ".") != 0 &&
+        strcmp(entry_path, "..") != 0) {
 #ifdef _WIN32
-        if (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+      if (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
 #endif
-        list_directory_existing_rec_internal(result, full_path);
-        if (file_exists(full_path))
-          DA_APPEND(*result, full_path);
-        else
-          free(full_path.ptr);
-      } else {
+      list_directory_existing_rec_internal(result, full_path);
+      if (file_exists(full_path))
+        DA_APPEND(*result, full_path);
+      else
         free(full_path.ptr);
-      }
-#ifdef _WIN32
-    } while (FindNextFile(file, &find_data) != 0);
-
-    FindClose(file);
-    free(path_prepared);
-#else
+    } else {
+      free(full_path.ptr);
     }
+#ifdef _WIN32
+  } while (FindNextFile(file, &find_data) != 0);
 
-    closedir(dir);
-#endif
+  FindClose(file);
+  free(path_prepared);
+#else
   }
 
+  closedir(dir);
+#endif
+}
+
+static Strs list_directory_existing_rec(char *path) {
   Strs result = {0};
   list_directory_existing_rec_internal(&result, (Str) { path, strlen(path) });
   return result;
@@ -752,6 +808,9 @@ static Strs list_directory_existing_rec(char *path) {
 
 static bool glob_matches(Str glob, Str str) {
   u32 i = 0, j = 0;
+
+  if (str.len >= 2 && str.ptr[0] == '.' && str.ptr[1] == PATH_SEP)
+    j += 2;
 
   while (i < glob.len && j < str.len) {
     if (glob.ptr[i] == '*') {
@@ -766,7 +825,7 @@ static bool glob_matches(Str glob, Str str) {
       };
       if (glob_matches(new_glob, new_str))
         return true;
-      if (!is_double_star && str.ptr[j] == '/')
+      if (!is_double_star && str.ptr[j] == PATH_SEP)
         return false;
       ++j;
     } else if (glob.ptr[i] == ' ') {
@@ -789,7 +848,7 @@ static bool glob_matches(Str glob, Str str) {
 static Strs match_glob(Str glob) {
   bool skip_prefix = glob.len < 2 ||
                      glob.ptr[0] != '.' ||
-                     glob.ptr[1] != '/';
+                     glob.ptr[1] != PATH_SEP;
   Strs result = {0};
   for (u32 i = 0; i < all_files_rec.len; ++i) {
     Str file = all_files_rec.items[i];
@@ -880,7 +939,7 @@ static bool mem_eq(void *a, void *b, u64 n) {
 }
 
 static Str get_header_full_path(Str path, Str includer, Str cflags) {
-  while (includer.len > 0 && includer.ptr[includer.len - 1] != '/')
+  while (includer.len > 0 && includer.ptr[includer.len - 1] != PATH_SEP)
     --includer.len;
 
   StringBuilder sb = {0};
@@ -907,8 +966,8 @@ static Str get_header_full_path(Str path, Str includer, Str cflags) {
         ++i;
 
       sb_append_str(&sb, (Str) { cflags.ptr + anchor, i - anchor });
-      if (cflags.ptr[i - 1] != '/')
-        sb_append_char(&sb, '/');
+      if (cflags.ptr[i - 1] != PATH_SEP)
+        sb_append_char(&sb, PATH_SEP);
       sb_append_str(&sb, path);
       sb_append_char(&sb, '\0');
 
@@ -924,48 +983,48 @@ static Str get_header_full_path(Str path, Str includer, Str cflags) {
   return (Str) { NULL, (u32) -1 };
 }
 
-static Strs parse_header_deps(Str src, Str cflags) {
-  void parse_header_deps_internal(Strs *result, Str src, Str cflags) {
-    char *str_cstr = malloc(src.len + 1);
-    memcpy(str_cstr, src.ptr, src.len);
-    str_cstr[src.len] = '\0';
-    Str content = read_file(str_cstr);
-    free(str_cstr);
-    if (content.len == (u32) -1)
-      return;
+void parse_header_deps_internal(Strs *result, Str src, Str cflags) {
+  char *str_cstr = malloc(src.len + 1);
+  memcpy(str_cstr, src.ptr, src.len);
+  str_cstr[src.len] = '\0';
+  Str content = read_file(str_cstr);
+  free(str_cstr);
+  if (content.len == (u32) -1)
+    return;
 
-    u32 i = 0;
-    while (i < content.len) {
-      if (i + 8 < content.len && mem_eq(content.ptr + i, "#include", 8)) {
-        i += 8;
+  u32 i = 0;
+  while (i < content.len) {
+    if (i + 8 < content.len && mem_eq(content.ptr + i, "#include", 8)) {
+      i += 8;
 
-        while (i < content.len && isspace(content.ptr[i]))
+      while (i < content.len && isspace(content.ptr[i]))
+        ++i;
+
+      if (i < content.len && content.ptr[i] == '"') {
+        u32 anchor = ++i;
+
+        while (i < content.len && content.ptr[i] != '"')
           ++i;
 
-        if (i < content.len && content.ptr[i] == '"') {
-          u32 anchor = ++i;
-
-          while (i < content.len && content.ptr[i] != '"')
-            ++i;
-
-          Str path = {
-            content.ptr + anchor,
-            i - anchor,
-          };
-          Str full_path = get_header_full_path(path, src, cflags);
-          if (full_path.len != (u32) -1) {
-            DA_APPEND(*result, full_path);
-            parse_header_deps_internal(result, full_path, cflags);
-          }
+        Str path = {
+          content.ptr + anchor,
+          i - anchor,
+        };
+        Str full_path = get_header_full_path(path, src, cflags);
+        if (full_path.len != (u32) -1) {
+          DA_APPEND(*result, full_path);
+          parse_header_deps_internal(result, full_path, cflags);
         }
       }
-
-      ++i;
     }
 
-    free(content.ptr);
+    ++i;
   }
 
+  free(content.ptr);
+}
+
+static Strs parse_header_deps(Str src, Str cflags) {
   Strs result = {0};
   parse_header_deps_internal(&result, src, cflags);
   return result;
@@ -1037,16 +1096,16 @@ static TargetBuildInfo *get_target_build_info(BuildConfig *build_config, Target 
 }
 
 static Str src_to_obj_path(TargetBuildInfo *target_info, Str src) {
-  bool add_slash = target_info->incpath.ptr[target_info->incpath.len - 1] != '/';
+  bool add_slash = target_info->incpath.ptr[target_info->incpath.len - 1] != PATH_SEP;
+  Str extension = get_objective_extension();
   Str result;
-  result.len = target_info->incpath.len + add_slash + src.len + 2;
+  result.len = target_info->incpath.len + add_slash + src.len + extension.len;
   result.ptr = malloc(result.len);
   memcpy(result.ptr, target_info->incpath.ptr, target_info->incpath.len);
   if (add_slash)
-    result.ptr[target_info->incpath.len] = '/';
+    result.ptr[target_info->incpath.len] = PATH_SEP;
   memcpy(result.ptr + target_info->incpath.len + add_slash, src.ptr, src.len);
-  result.ptr[target_info->incpath.len + add_slash + src.len] = '.';
-  result.ptr[target_info->incpath.len + add_slash + src.len + 1] = 'o';
+  memcpy(result.ptr + target_info->incpath.len + add_slash + src.len, extension.ptr, extension.len);
   return result;
 }
 
@@ -1055,7 +1114,7 @@ static void make_directory(Str path, bool is_file_path) {
   u32 anchor = 0, i = 0;
 
   while (i < path.len) {
-    if (path.ptr[i] == '/') {
+    if (path.ptr[i] == PATH_SEP) {
       DA_APPEND_MANY(sb, path.ptr + anchor, i - anchor);
       sb_append_char(&sb, '\0');
       if (!dir_exists_cstr(sb.items)) {
@@ -1067,7 +1126,7 @@ static void make_directory(Str path, bool is_file_path) {
         mkdir(sb.items, 0777);
 #endif
       }
-      sb.items[sb.len - 1] = '/';
+      sb.items[sb.len - 1] = PATH_SEP;
       anchor = ++i;
     } else {
       ++i;
@@ -1178,9 +1237,14 @@ static char *get_target_obj_build_cmd(TargetBuildInfo *info, u32 index) {
     sb_append_char(&sb, ' ');
     sb_append_str(&sb, info->cflags);
   }
-  sb_append_str(&sb, STR_LIT(" -c -o "));
+  sb_append_char(&sb, ' ');
+  sb_append_str(&sb, choose_compiler_objective_output_prefix());
+  if (get_quote_output_file())
+    sb_append_char(&sb, '"');
   make_directory(obj_path, true);
   sb_append_str(&sb, obj_path);
+  if (get_quote_output_file())
+    sb_append_char(&sb, '"');
   sb_append_char(&sb, ' ');
   sb_append_str(&sb, info->srcs.items[index]);
   sb_append_char(&sb, '\0');
@@ -1195,8 +1259,13 @@ static char *get_inc_executable_target_build_cmd(TargetBuildInfo *info) {
 
   StringBuilder sb = {0};
   sb_append_str(&sb, info->compiler);
-  sb_append_str(&sb, STR_LIT(" -o "));
+  sb_append_char(&sb, ' ');
+  sb_append_str(&sb, choose_compiler_executable_output_prefix());
+  if (get_quote_output_file())
+    sb_append_char(&sb, '"');
   sb_append_str(&sb, info->file);
+  if (get_quote_output_file())
+    sb_append_char(&sb, '"');
   for (u32 i = 0; i < info->srcs.len; ++i) {
     Str obj_path = src_to_obj_path(info, info->srcs.items[i]);
     sb_append_char(&sb, ' ');
@@ -1226,8 +1295,13 @@ static char *get_full_executable_target_build_cmd(TargetBuildInfo *info) {
 
   StringBuilder sb = {0};
   sb_append_str(&sb, info->compiler);
-  sb_append_str(&sb, STR_LIT(" -o "));
+  sb_append_char(&sb, ' ');
+  sb_append_str(&sb, choose_compiler_executable_output_prefix());
+  if (get_quote_output_file())
+    sb_append_char(&sb, '"');
   sb_append_str(&sb, info->file);
+  if (get_quote_output_file())
+    sb_append_char(&sb, '"');
   if (info->cflags.len > 0) {
     sb_append_char(&sb, ' ');
     sb_append_str(&sb, info->cflags);
@@ -1302,7 +1376,7 @@ static char *get_inc_shared_lib_target_build_cmd(TargetBuildInfo *info) {
 
   StringBuilder sb = {0};
   sb_append_str(&sb, info->compiler);
-  sb_append_str(&sb, STR_LIT(" -shared -o "));
+  sb_append_str(&sb, choose_compiler_shared_lib_output_prefix());
   sb_append_str(&sb, info->file);
   sb_append_strs(&sb, &obj_paths);
   for (u32 i = 0; i < info->dep_targets.len; ++i) {
@@ -1333,7 +1407,8 @@ static char *get_full_shared_lib_target_build_cmd(TargetBuildInfo *info) {
 
   StringBuilder sb = {0};
   sb_append_str(&sb, info->compiler);
-  sb_append_str(&sb, STR_LIT(" -o "));
+  sb_append_char(&sb, ' ');
+  sb_append_str(&sb, choose_compiler_shared_lib_output_prefix());
   sb_append_str(&sb, info->file);
   if (info->cflags.len > 0) {
     sb_append_char(&sb, ' ');
@@ -1358,7 +1433,7 @@ static char *get_full_shared_lib_target_build_cmd(TargetBuildInfo *info) {
 
 static void create_gitignore_file(Str prefix) {
   u32 prefix_len = 0;
-  while (prefix_len < prefix.len && prefix.ptr[prefix_len] != '/')
+  while (prefix_len < prefix.len && prefix.ptr[prefix_len] != PATH_SEP)
     ++prefix_len;
 
   char base_name[] = ".gitignore";
@@ -1366,7 +1441,7 @@ static void create_gitignore_file(Str prefix) {
   full_path.len = prefix_len + sizeof(base_name);
   full_path.ptr = malloc(full_path.len + 1);
   memcpy(full_path.ptr, prefix.ptr, prefix_len);
-  full_path.ptr[prefix_len] = '/';
+  full_path.ptr[prefix_len] = PATH_SEP;
   strcpy(full_path.ptr + prefix_len + 1, base_name);
   full_path.ptr[full_path.len] = '\0';
 
