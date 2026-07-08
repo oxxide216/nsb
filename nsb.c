@@ -4,9 +4,13 @@
 #include <stdlib.h>
 #include <ctype.h>
 // TODO: Windows support
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#endif
 
 #define BUILD_FILE_NAME "build.nsb"
 
@@ -118,8 +122,10 @@ typedef struct {
   Str              src_pattern;
   Str              deps_pattern;
   Str              compiler;
+  Str              archiver;
   Str              cflags;
   Str              ldflags;
+  Str              arflags;
   Str              incpath;
   TargetBuildInfo *info;
 } Target;
@@ -149,8 +155,10 @@ struct TargetBuildInfo {
   Strs       srcs;
   Strss      header_deps;
   Str        compiler;
+  Str        archiver;
   Str        cflags;
   Str        ldflags;
+  Str        arflags;
   Str        incpath;
   TargetRefs dep_targets;
   bool       rebuild;
@@ -340,19 +348,59 @@ static bool str_eq(Str a, Str b) {
 }
 
 static Str choose_compiler(void) {
+#ifdef _WIN32
+  return STR_LIT("cl");
+#else
   return STR_LIT("cc");
+#endif
+}
+
+static Str choose_archiver(void) {
+#ifdef _WIN32
+  return STR_LIT("lib");
+#else
+  return STR_LIT("ar");
+#endif
+}
+
+static Str choose_arflags(void) {
+#ifdef _WIN32
+  return STR_LIT("");
+#else
+  return STR_LIT("rcs");
+#endif
+}
+
+static Str choose_archiver_output_prefix(void) {
+#ifdef _WIN32
+  return STR_LIT("/out:");
+#else
+  return STR_LIT("");
+#endif
 }
 
 static Str get_executable_extension(void) {
+#ifdef _WIN32
+  return STR_LIT(".exe");
+#else
   return STR_LIT("");
+#endif
 }
 
 static Str get_static_lib_extension(void) {
+#ifdef _WIN32
+  return STR_LIT(".lib");
+#else
   return STR_LIT(".a");
+#endif
 }
 
 static Str get_shared_lib_extension(void) {
+#ifdef _WIN32
+  return STR_LIT(".dll");
+#else
   return STR_LIT(".so");
+#endif
 }
 
 static bool parse_target(Parser *parser) {
@@ -421,10 +469,14 @@ static bool parse_target(Parser *parser) {
       target.deps_pattern = value;
     } else if (str_eq(name, STR_LIT("cc"))) {
       target.compiler = value;
+    } else if (str_eq(name, STR_LIT("ar"))) {
+      target.archiver = value;
     } else if (str_eq(name, STR_LIT("cflags"))) {
       target.cflags = value;
     } else if (str_eq(name, STR_LIT("ldflags"))) {
       target.ldflags = value;
+    } else if (str_eq(name, STR_LIT("arflags"))) {
+      target.arflags = value;
     } else if (str_eq(name, STR_LIT("incpath"))) {
       target.incpath = value;
     } else {
@@ -434,7 +486,7 @@ static bool parse_target(Parser *parser) {
                    name.len, name.ptr);
       return false;
     }
-    _Static_assert (sizeof(Target) == 128, "Target structure configuration changed");
+    _Static_assert (sizeof(Target) == 160, "Target structure configuration changed");
   }
 
   if (target.src_pattern.len == 0) {
@@ -451,6 +503,14 @@ static bool parse_target(Parser *parser) {
 
   if (target.compiler.len == 0) {
     target.compiler = choose_compiler();
+  }
+
+  if (target.archiver.len == 0) {
+    target.archiver = choose_archiver();
+  }
+
+  if (target.arflags.len == 0) {
+    target.arflags = choose_arflags();
   }
 
   DA_APPEND(parser->build_config->targets, target);
@@ -545,10 +605,12 @@ static void dump_build_config(BuildConfig *build_config) {
     PRINT_TARGET_FIELD(target, src_pattern, "src");
     PRINT_TARGET_FIELD(target, deps_pattern, "deps");
     PRINT_TARGET_FIELD(target, compiler, "cc");
+    PRINT_TARGET_FIELD(target, archiver, "ar");
     PRINT_TARGET_FIELD(target, cflags, "cflags");
     PRINT_TARGET_FIELD(target, ldflags, "ldflags");
+    PRINT_TARGET_FIELD(target, arflags, "arflags");
     PRINT_TARGET_FIELD(target, incpath, "incpath");
-    _Static_assert (sizeof(Target) == 128, "Target structure configuration changed");
+    _Static_assert (sizeof(Target) == 160, "Target structure configuration changed");
   }
 }
 
@@ -599,7 +661,13 @@ char *str_to_cstr(Str str) {
 }
 
 static bool file_exists_cstr(char *path) {
+#ifdef _WIN32
+  DWORD attribs = GetFileAttributes(path);
+  return attribs != INVALID_FILE_ATTRIBUTES &&
+         (attribs & FILE_ATTRIBUTE_DIRECTORY) == 0;
+#else
   return access(path, F_OK) == 0;
+#endif
 }
 
 static bool file_exists(Str path) {
@@ -610,43 +678,71 @@ static bool file_exists(Str path) {
 }
 
 static bool dir_exists_cstr(char *path) {
+#ifdef _WIN32
+  DWORD attribs = GetFileAttributes(path);
+  return attribs != INVALID_FILE_ATTRIBUTES &&
+         (attribs & FILE_ATTRIBUTE_DIRECTORY);
+#else
   DIR *dir = opendir(path);
   bool result = dir != NULL;
   if (result)
     closedir(dir);
   return result;
+#endif
 }
 
 static Strs list_directory_existing_rec(char *path) {
   void list_directory_existing_rec_internal(Strs *result, Str path) {
+#ifdef _WIN32
+    char *path_prepared = malloc(path.len + 2);
+    memcpy(path_prepared, path.ptr, path.len);
+    strcpy(path_prepared + path.len, "\\*");
+    WIN32_FIND_DATA find_data;
+    HANDLE file = FindFirstFile(path_prepared, &find_data);
+
+    do {
+      char *entry_path = find_data.cFileName;
+#else
     DIR *dir = opendir(path.ptr);
     if (!dir)
       return;
 
     struct dirent *entry;
     while ((entry = readdir(dir))) {
+      char *entry_path = entry->d_name;
+#endif
       Str full_path;
-      full_path.len = path.len + (path.len > 0) + strlen(entry->d_name);
+      full_path.len = path.len + (path.len > 0) + strlen(entry_path);
       full_path.ptr = malloc(full_path.len + 1);
       memcpy(full_path.ptr, path.ptr, path.len);
       if (path.len > 0)
         full_path.ptr[path.len] = '/';
-      strcpy(full_path.ptr + path.len + (path.len > 0), entry->d_name);
+      strcpy(full_path.ptr + path.len + (path.len > 0), entry_path);
       full_path.ptr[full_path.len] = '\0';
 
-      if (strcmp(entry->d_name, ".") != 0 &&
-          strcmp(entry->d_name, "..") != 0) {
+      if (strcmp(entry_path, ".") != 0 &&
+          strcmp(entry_path, "..") != 0) {
+#ifdef _WIN32
+        if (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+#endif
         list_directory_existing_rec_internal(result, full_path);
         if (file_exists(full_path))
           DA_APPEND(*result, full_path);
         else
           free(full_path.ptr);
-        } else {
-          free(full_path.ptr);
-        }
+      } else {
+        free(full_path.ptr);
+      }
+#ifdef _WIN32
+    } while (FindNextFile(file, &find_data) != 0);
+
+    FindClose(file);
+    free(path_prepared);
+#else
     }
 
     closedir(dir);
+#endif
   }
 
   Strs result = {0};
@@ -886,8 +982,10 @@ static TargetBuildInfo *get_target_build_info(BuildConfig *build_config, Target 
   info->deps_expanded = expand_value(build_config, target->deps_pattern);
   info->srcs = match_glob(info->srcs_expanded);
   info->compiler = expand_value(build_config, target->compiler);
+  info->archiver = expand_value(build_config, target->archiver);
   info->cflags = expand_value(build_config, target->cflags);
   info->ldflags = expand_value(build_config, target->ldflags);
+  info->arflags = expand_value(build_config, target->arflags);
   info->incpath = expand_value(build_config, target->incpath);
   info->rebuild = config.rebuild_all_targets ||
                   (config.rebuild_main_target && target == build_config->targets.items);
@@ -963,7 +1061,11 @@ static void make_directory(Str path, bool is_file_path) {
       if (!dir_exists_cstr(sb.items)) {
         if (config.verbose)
           printf("[INFO] Creating directory %s\n", sb.items);
+#ifdef _WIN32
+        CreateDirectoryA(sb.items, NULL);
+#else
         mkdir(sb.items, 0777);
+#endif
       }
       sb.items[sb.len - 1] = '/';
       anchor = ++i;
@@ -978,7 +1080,11 @@ static void make_directory(Str path, bool is_file_path) {
     if (!dir_exists_cstr(sb.items)) {
       if (config.verbose)
         printf("[INFO] Creating directory %s\n", sb.items);
+#ifdef _WIN32
+      CreateDirectoryA(sb.items, NULL);
+#else
       mkdir(sb.items, 0777);
+#endif
     }
   }
 
@@ -987,12 +1093,25 @@ static void make_directory(Str path, bool is_file_path) {
 }
 
 static bool needs_rebuild(Str src, Str dest) {
+#ifdef _WIN32
+  BOOL result;
+  FILETIME src_time, dest_time;
+#else
   struct stat src_stat, dest_stat;
+#endif
   StringBuilder sb = {0};
 
   sb_append_str(&sb, src);
   sb_append_char(&sb, '\0');
+#ifdef _WIN32
+  HANDLE src_file = CreateFile(sb.items, GENERIC_READ, 0, NULL,
+                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+  result = GetFileTime(src_file, NULL, NULL, &src_time);
+  CloseHandle(src_file);
+  if (!result) {
+#else
   if (stat(sb.items, &src_stat) < 0) {
+#endif
     free(sb.items);
     return true;
   }
@@ -1001,14 +1120,31 @@ static bool needs_rebuild(Str src, Str dest) {
 
   sb_append_str(&sb, dest);
   sb_append_char(&sb, '\0');
+#ifdef _WIN32
+  HANDLE dest_file = CreateFile(sb.items, GENERIC_READ, 0, NULL,
+                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+  result = GetFileTime(dest_file, NULL, NULL, &dest_time);
+  CloseHandle(dest_file);
+  if (!result) {
+#else
   if (stat(sb.items, &dest_stat) < 0) {
+#endif
     free(sb.items);
     return true;
   }
 
   free(sb.items);
 
+#ifdef _WIN32
+  ULARGE_INTEGER src_int, dest_int;
+  src_int.u.LowPart = src_time.dwLowDateTime;
+  src_int.u.HighPart = src_time.dwHighDateTime;
+  dest_int.u.LowPart = dest_time.dwLowDateTime;
+  dest_int.u.HighPart = dest_time.dwHighDateTime;
+  return src_int.QuadPart > dest_int.QuadPart;
+#else
   return src_stat.st_mtime > dest_stat.st_mtime;
+#endif
 }
 
 static bool needs_rebuild_many_srcs(Strs *srcs, Str dest) {
@@ -1128,7 +1264,13 @@ static char *get_static_lib_target_build_cmd(TargetBuildInfo *info) {
   }
 
   StringBuilder sb = {0};
-  sb_append_str(&sb, STR_LIT("ar rcs "));
+  sb_append_str(&sb, info->archiver);
+  if (info->arflags.len > 0) {
+    sb_append_char(&sb, ' ');
+    sb_append_str(&sb, info->arflags);
+  }
+  sb_append_char(&sb, ' ');
+  sb_append_str(&sb, choose_archiver_output_prefix());
   sb_append_str(&sb, info->file);
   sb_append_strs(&sb, &obj_paths);
   sb_append_char(&sb, '\0');
@@ -1293,7 +1435,11 @@ static bool build(BuildConfig *build_config, Target *target) {
 i32 main(i32 argc, char **argv) {
   parse_args(argc, argv);
 
+#ifdef _WIN32
+  SetCurrentDirectory(config.build_file_dir);
+#else
   chdir(config.build_file_dir);
+#endif
 
   BuildConfig build_config = {0};
   if (!parse_build_file(BUILD_FILE_NAME, &build_config)) {
