@@ -154,29 +154,29 @@ typedef struct {
   BuildConfig *build_config;
 } Parser;
 
-struct TargetBuildInfo {
-  Str        file;
-  Type       type;
-  Str        srcs_expanded;
-  Str        deps_expanded;
-  Strs       srcs;
-  Strss      header_deps;
-  Str        compiler;
-  Str        archiver;
-  Str        cflags;
-  Str        ldflags;
-  Str        arflags;
-  Str        incpath;
-  TargetRefs dep_targets;
-  bool       rebuild;
-  bool       built;
-};
-
 typedef enum {
   BuildResultOk = 0,
   BuildResultFail,
   BuildResultUpToDate,
 } BuildResult;
+
+struct TargetBuildInfo {
+  Str         file;
+  Type        type;
+  Str         srcs_expanded;
+  Str         deps_expanded;
+  Strs        srcs;
+  Strss       header_deps;
+  Str         compiler;
+  Str         archiver;
+  Str         cflags;
+  Str         ldflags;
+  Str         arflags;
+  Str         incpath;
+  TargetRefs  dep_targets;
+  bool        rebuild;
+  BuildResult build_result;
+};
 
 static Strs all_files_rec;
 static Config config;
@@ -1060,6 +1060,7 @@ static TargetBuildInfo *get_target_build_info(BuildConfig *build_config, Target 
   info->incpath = expand_value(build_config, target->incpath);
   info->rebuild = config.rebuild_all_targets ||
                   (config.rebuild_main_target && target == build_config->targets.items);
+  info->build_result = BuildResultFail;
 
   for (u32 i = 0; i < info->srcs.len; ++i) {
     Target *dep_target = NULL;
@@ -1475,9 +1476,9 @@ static BuildResult build(BuildConfig *build_config, Target *target) {
     target->info = info;
   }
 
-  if (info->built)
-    return BuildResultUpToDate;
-  info->built = true;
+  if (info->build_result != BuildResultFail)
+    return info->build_result;
+  info->build_result = BuildResultOk;
 
   for (u32 i = 0; i < info->dep_targets.len; ++i) {
     BuildResult result = build(build_config, info->dep_targets.items[i]);
