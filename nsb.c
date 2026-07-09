@@ -1303,7 +1303,7 @@ static char *get_full_executable_target_build_cmd(TargetBuildInfo *info) {
     if (!needs_rebuild_many_srcs(&info->srcs, info->file))
       return NULL;
     if (!needs_rebuild_target_refs(&info->dep_targets, info->file))
-    return NULL;
+      return NULL;
   }
 
   StringBuilder sb = {0};
