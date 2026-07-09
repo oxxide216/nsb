@@ -1500,8 +1500,10 @@ static BuildResult build(BuildConfig *build_config, Target *target) {
 
       if (config.verbose)
         printf("[INFO] Running %s\n", cmd);
-      system(cmd);
+      int result = system(cmd);
       free(cmd);
+      if (result != 0)
+        return BuildResultFail;
     }
   }
 
