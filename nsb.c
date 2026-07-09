@@ -1547,10 +1547,19 @@ i32 main(i32 argc, char **argv) {
   all_files_rec = list_directory_existing_rec(".");
 
   if (config.build_all) {
-    for (u32 i = 0; i < build_config.targets.len; ++i)
-      build(&build_config, build_config.targets.items + i);
+    for (u32 i = 0; i < build_config.targets.len; ++i) {
+      if (!build(&build_config, build_config.targets.items + i)) {
+        build_config_destroy(&build_config);
+        all_files_rec_destroy();
+        return 1;
+      }
+    }
   } else {
-    build(&build_config, build_config.targets.items);
+    if (!build(&build_config, build_config.targets.items)) {
+      build_config_destroy(&build_config);
+      all_files_rec_destroy();
+      return 1;
+    }
   }
 
   build_config_destroy(&build_config);
