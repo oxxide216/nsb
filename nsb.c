@@ -169,6 +169,7 @@ struct TargetBuildInfo {
   Str        incpath;
   TargetRefs dep_targets;
   bool       rebuild;
+  bool       built;
 };
 
 static Strs all_files_rec;
@@ -1462,8 +1463,14 @@ static void create_gitignore_file(Str prefix) {
 }
 
 static bool build(BuildConfig *build_config, Target *target) {
-  TargetBuildInfo *info = get_target_build_info(build_config, target);
-  target->info = info;
+  TargetBuildInfo *info = target->info;
+  if (!info) {
+    info = get_target_build_info(build_config, target);
+    target->info = info;
+  }
+
+  if (info->built)
+    return true;
 
   for (u32 i = 0; i < info->dep_targets.len; ++i)
     if (!build(build_config, info->dep_targets.items[i]))
@@ -1509,6 +1516,7 @@ static bool build(BuildConfig *build_config, Target *target) {
     printf("[INFO] Running %s\n", cmd);
   bool result = system(cmd) == 0;
   free(cmd);
+  info->built = true;
   return result;
 }
 
