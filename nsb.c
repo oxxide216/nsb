@@ -857,11 +857,11 @@ static bool glob_matches(Str glob, Str str) {
   return i == glob.len && j == str.len;
 }
 
-static Strs match_glob(Str glob) {
+static void match_glob_internal(Strs *result, Str glob) {
   bool skip_prefix = glob.len < 2 ||
                      glob.ptr[0] != '.' ||
                      glob.ptr[1] != PATH_SEP;
-  Strs result = {0};
+
   for (u32 i = 0; i < all_files_rec.len; ++i) {
     Str file = all_files_rec.items[i];
     if (skip_prefix) {
@@ -869,8 +869,35 @@ static Strs match_glob(Str glob) {
       file.len -= 2;
     }
     if (glob_matches(glob, file))
-      DA_APPEND(result, file);
+      DA_APPEND(*result, file);
   }
+}
+
+static Strs match_glob(Str glob) {
+  Strs result = {0};
+
+  u32 anchor = 0;
+  for (u32 i = 0; i < glob.len; ++i) {
+    if (glob.ptr[i] == ' ') {
+      if (anchor < i) {
+        Str local_glob = {
+          glob.ptr + anchor,
+          i - anchor,
+        };
+        anchor = i + 1;
+        match_glob_internal(&result, local_glob);
+      }
+    }
+  }
+
+  if (anchor < glob.len) {
+    Str local_glob = {
+      glob.ptr + anchor,
+      glob.len - anchor,
+    };
+    match_glob_internal(&result, local_glob);
+  }
+
   return result;
 }
 
