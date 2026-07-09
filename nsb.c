@@ -1471,6 +1471,7 @@ static bool build(BuildConfig *build_config, Target *target) {
 
   if (info->built)
     return true;
+  info->built = true;
 
   for (u32 i = 0; i < info->dep_targets.len; ++i)
     if (!build(build_config, info->dep_targets.items[i]))
@@ -1516,7 +1517,6 @@ static bool build(BuildConfig *build_config, Target *target) {
     printf("[INFO] Running %s\n", cmd);
   bool result = system(cmd) == 0;
   free(cmd);
-  info->built = true;
   return result;
 }
 
