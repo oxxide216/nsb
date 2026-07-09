@@ -172,6 +172,12 @@ struct TargetBuildInfo {
   bool       built;
 };
 
+typedef enum {
+  BuildResultOk = 0,
+  BuildResultFail,
+  BuildResultUpToDate,
+} BuildResult;
+
 static Strs all_files_rec;
 static Config config;
 
@@ -1462,7 +1468,7 @@ static void create_gitignore_file(Str prefix) {
   free(full_path.ptr);
 }
 
-static bool build(BuildConfig *build_config, Target *target) {
+static BuildResult build(BuildConfig *build_config, Target *target) {
   TargetBuildInfo *info = target->info;
   if (!info) {
     info = get_target_build_info(build_config, target);
@@ -1470,12 +1476,16 @@ static bool build(BuildConfig *build_config, Target *target) {
   }
 
   if (info->built)
-    return true;
+    return BuildResultUpToDate;
   info->built = true;
 
-  for (u32 i = 0; i < info->dep_targets.len; ++i)
-    if (!build(build_config, info->dep_targets.items[i]))
-      return false;
+  for (u32 i = 0; i < info->dep_targets.len; ++i) {
+    BuildResult result = build(build_config, info->dep_targets.items[i]);
+    if (result == BuildResultFail)
+      return BuildResultFail;
+    if (result == BuildResultOk)
+      info->rebuild = true;
+  }
 
   if (((info->type == TypeExecutable || info->type == TypeSharedLib) &&
        info->incpath.len > 0) ||
@@ -1511,11 +1521,11 @@ static bool build(BuildConfig *build_config, Target *target) {
       cmd = get_full_shared_lib_target_build_cmd(info);
   }
   if (!cmd)
-    return true;
+    return BuildResultUpToDate;
 
   if (config.verbose)
     printf("[INFO] Running %s\n", cmd);
-  bool result = system(cmd) == 0;
+  BuildResult result = system(cmd) == 0 ? BuildResultOk : BuildResultFail;
   free(cmd);
   return result;
 }
@@ -1548,14 +1558,14 @@ i32 main(i32 argc, char **argv) {
 
   if (config.build_all) {
     for (u32 i = 0; i < build_config.targets.len; ++i) {
-      if (!build(&build_config, build_config.targets.items + i)) {
+      if (build(&build_config, build_config.targets.items + i) == BuildResultFail) {
         build_config_destroy(&build_config);
         all_files_rec_destroy();
         return 1;
       }
     }
   } else {
-    if (!build(&build_config, build_config.targets.items)) {
+    if (build(&build_config, build_config.targets.items) == BuildResultFail) {
       build_config_destroy(&build_config);
       all_files_rec_destroy();
       return 1;
