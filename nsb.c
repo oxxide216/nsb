@@ -1478,7 +1478,6 @@ static BuildResult build(BuildConfig *build_config, Target *target) {
 
   if (info->build_result != BuildResultFail)
     return info->build_result;
-  info->build_result = BuildResultOk;
 
   for (u32 i = 0; i < info->dep_targets.len; ++i) {
     BuildResult result = build(build_config, info->dep_targets.items[i]);
@@ -1523,13 +1522,16 @@ static BuildResult build(BuildConfig *build_config, Target *target) {
     else
       cmd = get_full_shared_lib_target_build_cmd(info);
   }
-  if (!cmd)
+  if (!cmd) {
+    info->build_result = BuildResultUpToDate;
     return BuildResultUpToDate;
+  }
 
   if (config.verbose)
     printf("[INFO] Running %s\n", cmd);
   BuildResult result = system(cmd) == 0 ? BuildResultOk : BuildResultFail;
   free(cmd);
+  info->build_result = BuildResultOk;
   return result;
 }
 
