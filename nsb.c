@@ -93,6 +93,7 @@ typedef struct {
   char *build_file_dir;
   bool  debug;
   bool  verbose;
+  bool  build_all;
   bool  rebuild_main_target;
   bool  rebuild_all_targets;
 } Config;
@@ -183,6 +184,10 @@ static void parse_args(u32 argc, char **argv) {
       config.verbose = true;
     } else if (strcmp(argv[i], "--verbose") == 0) {
       config.verbose = true;
+    } else if (strcmp(argv[i], "-a") == 0) {
+      config.build_all = true;
+    } else if (strcmp(argv[i], "--all") == 0) {
+      config.build_all = true;
     } else if (strcmp(argv[i], "-r") == 0) {
       config.rebuild_main_target = true;
     } else if (strcmp(argv[i], "--rebuild") == 0) {
@@ -1533,7 +1538,12 @@ i32 main(i32 argc, char **argv) {
 
   all_files_rec = list_directory_existing_rec(".");
 
-  build(&build_config, build_config.targets.items);
+  if (config.build_all) {
+    for (u32 i = 0; i < build_config.targets.len; ++i)
+      build(&build_config, build_config.targets.items + i);
+  } else {
+    build(&build_config, build_config.targets.items);
+  }
 
   build_config_destroy(&build_config);
   all_files_rec_destroy();
