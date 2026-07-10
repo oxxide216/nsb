@@ -184,7 +184,7 @@ static Strs all_files_rec;
 static Config config;
 
 static void print_usage(char *program_name) {
-  printf("Usage: %s <options...> <build.nsb directory>\n");
+  printf("Usage: %s <options...> <build.nsb directory>\n", program_name);
   printf("        -h --help          Show this message\n");
   printf("        --debug            Enable debug output\n");
   printf("        -v --verbose       Enable verbose output\n");
