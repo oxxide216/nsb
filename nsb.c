@@ -103,8 +103,9 @@ typedef struct {
   u32   len;
 } Str;
 
-typedef Da(Str) Strs;
-typedef Da(Strs) Strss;
+typedef Da(char *) CStrs;
+typedef Da(Str)    Strs;
+typedef Da(Strs)   Strss;
 
 typedef Da(char) StringBuilder;
 
@@ -1514,30 +1515,40 @@ static BuildResult build(BuildConfig *build_config, Target *target) {
       info->rebuild = true;
   }
 
-  bool any_src_recompiled = false;
+  CStrs src_build_cmds = {0};
   if (((info->type == TypeExecutable || info->type == TypeSharedLib) &&
        info->incpath.len > 0) ||
       info->type == TypeStaticLib) {
-    printf("[INFO] Compiling sources for target %.*s\n", info->file.len, info->file.ptr);
     make_directory(info->incpath, false);
     create_gitignore_file(info->incpath);
     for (u32 i = 0; i < info->srcs.len; ++i) {
       char *cmd = get_target_obj_build_cmd(info, i);
-      if (!cmd)
-        continue;
-
-      any_src_recompiled = true;
-      if (config.verbose)
-        printf("[INFO] Running %s\n", cmd);
-      int result = system(cmd);
-      free(cmd);
-      if (result != 0)
-        return BuildResultFail;
+      if (cmd)
+        DA_APPEND(src_build_cmds, cmd);
     }
-  }
-  info->rebuild |= any_src_recompiled;
 
-  printf("[INFO] Compiling target %.*s\n", info->file.len, info->file.ptr);
+    if (src_build_cmds.len > 0) {
+      printf("[INFO] Compiling sources for target %.*s\n", info->file.len, info->file.ptr);
+      info->rebuild = true;
+    }
+
+    for (u32 i = 0; i < src_build_cmds.len; ++i) {
+      if (config.verbose)
+        printf("[INFO] Running %s\n", src_build_cmds.items[i]);
+      int result = system(src_build_cmds.items[i]);
+      free(src_build_cmds.items[i]);
+      if (result != 0) {
+        for (u32 j = i + 1; j < src_build_cmds.len; ++j)
+          free(src_build_cmds.items[j]);
+        free(src_build_cmds.items);
+        return BuildResultFail;
+      }
+    }
+
+    if (src_build_cmds.items)
+      free(src_build_cmds.items);
+  }
+
   char *cmd;
   if (info->type == TypeExecutable) {
     if (info->incpath.len > 0)
@@ -1557,6 +1568,7 @@ static BuildResult build(BuildConfig *build_config, Target *target) {
     return BuildResultUpToDate;
   }
 
+  printf("[INFO] Compiling target %.*s\n", info->file.len, info->file.ptr);
   if (config.verbose)
     printf("[INFO] Running %s\n", cmd);
   BuildResult result = system(cmd) == 0 ? BuildResultOk : BuildResultFail;
