@@ -1514,6 +1514,7 @@ static BuildResult build(BuildConfig *build_config, Target *target) {
       info->rebuild = true;
   }
 
+  bool any_src_recompiled = false;
   if (((info->type == TypeExecutable || info->type == TypeSharedLib) &&
        info->incpath.len > 0) ||
       info->type == TypeStaticLib) {
@@ -1525,6 +1526,7 @@ static BuildResult build(BuildConfig *build_config, Target *target) {
       if (!cmd)
         continue;
 
+      any_src_recompiled = true;
       if (config.verbose)
         printf("[INFO] Running %s\n", cmd);
       int result = system(cmd);
@@ -1533,6 +1535,7 @@ static BuildResult build(BuildConfig *build_config, Target *target) {
         return BuildResultFail;
     }
   }
+  info->rebuild |= any_src_recompiled;
 
   printf("[INFO] Compiling target %.*s\n", info->file.len, info->file.ptr);
   char *cmd;
