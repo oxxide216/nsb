@@ -91,6 +91,7 @@ typedef unsigned long      u64;
 
 typedef struct {
   char *build_file_dir;
+  bool  help;
   bool  debug;
   bool  verbose;
   bool  build_all;
@@ -182,11 +183,25 @@ struct TargetBuildInfo {
 static Strs all_files_rec;
 static Config config;
 
-static void parse_args(u32 argc, char **argv) {
+static void print_usage(char *program_name) {
+  printf("Usage: %s <options...> <build.nsb directory>\n");
+  printf("        -h --help          Show this message\n");
+  printf("        --debug            Enable debug output\n");
+  printf("        -v --verbose       Enable verbose output\n");
+  printf("        -a --all           Build all targets (default - first only)\n");
+  printf("        -r --rebuild       Always rebuild first target\n");
+  printf("        -R --rebuild-all   Always rebuild all targets\n");
+}
+
+static bool parse_args(u32 argc, char **argv) {
   config.build_file_dir = ".";
 
   for (u32 i = 1; i < argc; ++i) {
-    if (strcmp(argv[i], "--debug") == 0) {
+    if (strcmp(argv[i], "-h") == 0) {
+      config.help = true;
+    } else if (strcmp(argv[i], "--help") == 0) {
+      config.help = true;
+    } else if (strcmp(argv[i], "--debug") == 0) {
       config.debug = true;
     } else if (strcmp(argv[i], "-v") == 0) {
       config.verbose = true;
@@ -207,11 +222,15 @@ static void parse_args(u32 argc, char **argv) {
       config.rebuild_main_target = true;
       config.rebuild_all_targets = true;
     } else if (argv[i][0] == '-') {
+      print_usage(argv[0]);
       printf("[ERROR] Unknown flag: %s\n", argv[i]);
+      return false;
     } else {
       config.build_file_dir = argv[1];
     }
   }
+
+  return true;
 }
 
 static void parser_destroy(Parser *parser) {
@@ -1578,7 +1597,13 @@ static BuildResult build(BuildConfig *build_config, Target *target) {
 }
 
 i32 main(i32 argc, char **argv) {
-  parse_args(argc, argv);
+  if (!parse_args(argc, argv))
+    return 1;
+
+  if (config.help) {
+    print_usage(argv[0]);
+    return 0;
+  }
 
 #ifdef _WIN32
   SetCurrentDirectory(config.build_file_dir);
