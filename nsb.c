@@ -121,6 +121,7 @@ typedef enum {
   TypeExecutable = 0,
   TypeStaticLib,
   TypeSharedLib,
+  TypeCustom,
 } Type;
 
 typedef struct TargetBuildInfo TargetBuildInfo;
@@ -128,6 +129,7 @@ typedef struct TargetBuildInfo TargetBuildInfo;
 typedef struct {
   Str              file;
   Type             type;
+  Str              cmd;
   Str              src_pattern;
   Str              deps_pattern;
   Str              compiler;
@@ -165,6 +167,7 @@ typedef enum {
 struct TargetBuildInfo {
   Str         file;
   Type        type;
+  Str         cmd;
   Str         srcs_expanded;
   Str         deps_expanded;
   Strs        srcs;
@@ -530,6 +533,8 @@ static bool parse_target(Parser *parser) {
         target.type = TypeStaticLib;
       } else if (str_eq(value, STR_LIT("shared_lib"))) {
         target.type = TypeSharedLib;
+      } else if (str_eq(value, STR_LIT("custom"))) {
+        target.type = TypeCustom;
       } else {
         parser->row = value_row;
         parser->col = value_col;
@@ -541,6 +546,8 @@ static bool parse_target(Parser *parser) {
         fprintf(stderr, "    shared_lib\n");
         return false;
       }
+    } else if (str_eq(name, STR_LIT("cmd"))) {
+      target.cmd = value;
     } else if (str_eq(name, STR_LIT("src"))) {
       target.src_pattern = value;
     } else if (str_eq(name, STR_LIT("deps"))) {
@@ -565,11 +572,11 @@ static bool parse_target(Parser *parser) {
       return false;
     }
 #ifndef _WIN32
-    _Static_assert (sizeof(Target) == 160, "Target structure configuration changed");
+    _Static_assert (sizeof(Target) == 176, "Target structure configuration changed");
 #endif
   }
 
-  if (target.src_pattern.len == 0) {
+  if (target.type != TypeCustom && target.src_pattern.len == 0) {
     fprintf(stderr, "[ERROR] Target %.*s does not have `src` field\n",
             target.file.len, target.file.ptr);
     return false;
@@ -577,6 +584,12 @@ static bool parse_target(Parser *parser) {
 
   if (target.type == TypeStaticLib && target.incpath.len == 0) {
     fprintf(stderr, "[ERROR] Target of type static_lib %.*s does not have `incpath` field\n",
+            target.file.len, target.file.ptr);
+    return false;
+  }
+
+  if (target.type == TypeCustom && target.cmd.len == 0) {
+    fprintf(stderr, "[ERROR] Target of type custom %.*s does not have `cmd` field\n",
             target.file.len, target.file.ptr);
     return false;
   }
@@ -662,6 +675,7 @@ static char *get_target_type_str(Type type) {
   case TypeExecutable: return "executable";
   case TypeStaticLib:  return "static_lib";
   case TypeSharedLib:  return "shared_lib";
+  case TypeCustom:     return "custom";
   }
 
   fprintf(stderr, "UNREACHABLE\n");
@@ -682,6 +696,7 @@ static void dump_build_config(BuildConfig *build_config) {
     Target *target = build_config->targets.items + i;
     printf("[%.*s]\n", target->file.len, target->file.ptr);
     printf("type = %s\n", get_target_type_str(target->type));
+    PRINT_TARGET_FIELD(target, cmd, "cmd");
     PRINT_TARGET_FIELD(target, src_pattern, "src");
     PRINT_TARGET_FIELD(target, deps_pattern, "deps");
     PRINT_TARGET_FIELD(target, compiler, "cc");
@@ -691,7 +706,7 @@ static void dump_build_config(BuildConfig *build_config) {
     PRINT_TARGET_FIELD(target, arflags, "arflags");
     PRINT_TARGET_FIELD(target, incpath, "incpath");
 #ifndef _WIN32
-    _Static_assert (sizeof(Target) == 160, "Target structure configuration changed");
+    _Static_assert (sizeof(Target) == 176, "Target structure configuration changed");
 #endif
   }
 }
@@ -948,6 +963,12 @@ static Str get_target_full_file(Str file, Type type) {
     memcpy(full_file.ptr + 3, file.ptr, file.len);
     memcpy(full_file.ptr + 3 + file.len, ext.ptr, ext.len);
     return full_file;
+  } else if (type == TypeCustom) {
+    Str full_file;
+    full_file.len = file.len;
+    full_file.ptr = malloc(full_file.len);
+    memcpy(full_file.ptr, file.ptr, file.len);
+    return full_file;
   }
 
   fprintf(stderr, "UNREACHABLE\n");
@@ -1096,6 +1117,7 @@ static TargetBuildInfo *get_target_build_info(BuildConfig *build_config, Target 
   info->file = get_target_full_file(file_expanded, target->type);
   free(file_expanded.ptr);
   info->type = target->type;
+  info->cmd = expand_value(build_config, target->cmd);
   info->srcs_expanded = expand_value(build_config, target->src_pattern);
   info->deps_expanded = expand_value(build_config, target->deps_pattern);
   info->srcs = match_glob(info->srcs_expanded);
@@ -1581,6 +1603,10 @@ static BuildResult build(BuildConfig *build_config, Target *target) {
       cmd = get_inc_shared_lib_target_build_cmd(info);
     else
       cmd = get_full_shared_lib_target_build_cmd(info);
+  } else if (info->type == TypeCustom) {
+    cmd = malloc(info->cmd.len + 1);
+    memcpy(cmd, info->cmd.ptr, info->cmd.len);
+    cmd[info->cmd.len] = '\0';
   }
   if (!cmd) {
     info->build_result = BuildResultUpToDate;
