@@ -1224,45 +1224,44 @@ static Str src_to_obj_path(TargetBuildInfo *target_info, Str src) {
 }
 
 static void make_directory(Str path, bool is_file_path) {
-  StringBuilder sb = {0};
-  u32 anchor = 0, i = 0;
+  u32 i = 0;
 
   while (i < path.len) {
     if (path.ptr[i] == PATH_SEP) {
-      DA_APPEND_MANY(sb, path.ptr + anchor, i - anchor);
-      sb_append_char(&sb, '\0');
-      if (!dir_exists_cstr(sb.items)) {
+      char prev = path.ptr[i];
+      path.ptr[i] = '\0';
+      if (!dir_exists_cstr(path.ptr)) {
         if (config.verbose)
-          printf("[INFO] Creating directory %s\n", sb.items);
+          printf("[INFO] Creating directory %s\n", path.ptr);
 #ifdef _WIN32
-        CreateDirectoryA(sb.items, NULL);
+        CreateDirectoryA(path.ptr, NULL);
 #else
-        mkdir(sb.items, 0777);
+        mkdir(path.ptr, 0777);
 #endif
       }
-      sb.items[sb.len - 1] = PATH_SEP;
-      anchor = ++i;
-    } else {
-      ++i;
+      path.ptr[i] = prev;
     }
+
+    ++i;
   }
 
-  if (!is_file_path && anchor < path.len) {
-    DA_APPEND_MANY(sb, path.ptr + anchor, path.len - anchor);
-    sb_append_char(&sb, '\0');
-    if (!dir_exists_cstr(sb.items)) {
+  if (!is_file_path && path.ptr[path.len - 1] != PATH_SEP) {
+    Str temp_path;
+    temp_path.len = path.len;
+    temp_path.ptr = malloc(temp_path.len + 1);
+    memcpy(temp_path.ptr, path.ptr, temp_path.len);
+    temp_path.ptr[temp_path.len] = '\0';
+    if (!dir_exists_cstr(temp_path.ptr)) {
       if (config.verbose)
-        printf("[INFO] Creating directory %s\n", sb.items);
+        printf("[INFO] Creating directory %s\n", temp_path.ptr);
 #ifdef _WIN32
-      CreateDirectoryA(sb.items, NULL);
+      CreateDirectoryA(temp_path.ptr, NULL);
 #else
-      mkdir(sb.items, 0777);
+      mkdir(temp_path.ptr, 0777);
 #endif
     }
+    free(temp_path.ptr);
   }
-
-  if (sb.items)
-    free(sb.items);
 }
 
 static bool needs_rebuild(Str src, Str dest) {
