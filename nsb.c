@@ -1210,7 +1210,7 @@ static TargetBuildInfo *get_target_build_info(BuildConfig *build_config, Target 
 }
 
 static Str src_to_obj_path(TargetBuildInfo *target_info, Str src) {
-  bool add_slash = target_info->incpath.ptr[target_info->incpath.len - 1] != PATH_SEP;
+  bool add_slash = target_info->incpath.len > 0 && target_info->incpath.ptr[target_info->incpath.len - 1] != PATH_SEP;
   Str extension = get_objective_extension();
   Str result;
   result.len = target_info->incpath.len + add_slash + src.len + extension.len;
@@ -1552,6 +1552,21 @@ static char *get_full_shared_lib_target_build_cmd(TargetBuildInfo *info) {
   return sb.items;
 }
 
+static char *get_custom_target_build_cmd(TargetBuildInfo *info) {
+  if (!info->rebuild) {
+    if (!needs_rebuild_many_srcs(&info->srcs, info->file))
+      return NULL;
+    if (!needs_rebuild_deps(&info->deps, info->file))
+      return NULL;
+  }
+
+  StringBuilder sb = {0};
+  sb_append_str(&sb, info->cmd);
+  sb_append_char(&sb, '\0');
+
+  return sb.items;
+}
+
 static void create_gitignore_file(Str prefix) {
   u32 prefix_len = 0;
   while (prefix_len < prefix.len && prefix.ptr[prefix_len] != PATH_SEP)
@@ -1595,12 +1610,13 @@ static BuildResult build(BuildConfig *build_config, Target *target) {
       info->rebuild = true;
   }
 
-  CStrs src_build_cmds = {0};
   if (((info->type == TypeExecutable || info->type == TypeSharedLib) &&
        info->incpath.len > 0) ||
       info->type == TypeStaticLib) {
     make_directory(info->incpath, false);
     create_gitignore_file(info->incpath);
+
+    CStrs src_build_cmds = {0};
     for (u32 i = 0; i < info->srcs.len; ++i) {
       char *cmd = get_target_obj_build_cmd(info, i);
       if (cmd)
@@ -1627,6 +1643,13 @@ static BuildResult build(BuildConfig *build_config, Target *target) {
 
     if (src_build_cmds.items)
       free(src_build_cmds.items);
+  } else if (info->type == TypeCustom && info->srcs.len > 0) {
+    for (u32 i = 0; i < info->srcs.len; ++i) {
+      if (needs_rebuild(info->srcs.items[i], info->file)) {
+        info->rebuild = true;
+        break;
+      }
+    }
   }
 
   char *cmd;
@@ -1643,9 +1666,7 @@ static BuildResult build(BuildConfig *build_config, Target *target) {
     else
       cmd = get_full_shared_lib_target_build_cmd(info);
   } else if (info->type == TypeCustom) {
-    cmd = malloc(info->cmd.len + 1);
-    memcpy(cmd, info->cmd.ptr, info->cmd.len);
-    cmd[info->cmd.len] = '\0';
+    cmd = get_custom_target_build_cmd(info);
   }
   if (!cmd) {
     info->build_result = BuildResultUpToDate;
