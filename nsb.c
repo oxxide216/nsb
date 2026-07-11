@@ -132,6 +132,7 @@ typedef struct {
   Str              cmd;
   Str              src_pattern;
   Str              deps_pattern;
+  Str              ghost_deps_pattern;
   Str              compiler;
   Str              archiver;
   Str              cflags;
@@ -142,7 +143,13 @@ typedef struct {
 } Target;
 
 typedef Da(Target) Targets;
-typedef Da(Target *) TargetRefs;
+
+typedef struct {
+  Target *target;
+  bool    is_ghost;
+} Dep;
+
+typedef Da(Dep) Deps;
 
 typedef struct {
   Str     content;
@@ -170,6 +177,7 @@ struct TargetBuildInfo {
   Str         cmd;
   Str         srcs_expanded;
   Str         deps_expanded;
+  Str         ghost_deps_expanded;
   Strs        srcs;
   Strss       header_deps;
   Str         compiler;
@@ -178,7 +186,7 @@ struct TargetBuildInfo {
   Str         ldflags;
   Str         arflags;
   Str         incpath;
-  TargetRefs  dep_targets;
+  Deps        deps;
   bool        rebuild;
   BuildResult build_result;
 };
@@ -245,6 +253,7 @@ static void target_build_info_destroy(TargetBuildInfo *info) {
   free(info->file.ptr);
   free(info->srcs_expanded.ptr);
   free(info->deps_expanded.ptr);
+  free(info->ghost_deps_expanded.ptr);
   if (info->srcs.items)
     free(info->srcs.items);
   for (u32 i = 0; i < info->header_deps.len; ++i) {
@@ -260,8 +269,8 @@ static void target_build_info_destroy(TargetBuildInfo *info) {
   free(info->cflags.ptr);
   free(info->ldflags.ptr);
   free(info->incpath.ptr);
-  if (info->dep_targets.items)
-    free(info->dep_targets.items);
+  if (info->deps.items)
+    free(info->deps.items);
   free(info);
 }
 
@@ -552,6 +561,8 @@ static bool parse_target(Parser *parser) {
       target.src_pattern = value;
     } else if (str_eq(name, STR_LIT("deps"))) {
       target.deps_pattern = value;
+    } else if (str_eq(name, STR_LIT("ghost_deps"))) {
+      target.ghost_deps_pattern = value;
     } else if (str_eq(name, STR_LIT("cc"))) {
       target.compiler = value;
     } else if (str_eq(name, STR_LIT("ar"))) {
@@ -572,7 +583,7 @@ static bool parse_target(Parser *parser) {
       return false;
     }
 #ifndef _WIN32
-    _Static_assert (sizeof(Target) == 176, "Target structure configuration changed");
+    _Static_assert (sizeof(Target) == 192, "Target structure configuration changed");
 #endif
   }
 
@@ -699,6 +710,7 @@ static void dump_build_config(BuildConfig *build_config) {
     PRINT_TARGET_FIELD(target, cmd, "cmd");
     PRINT_TARGET_FIELD(target, src_pattern, "src");
     PRINT_TARGET_FIELD(target, deps_pattern, "deps");
+    PRINT_TARGET_FIELD(target, ghost_deps_pattern, "ghost_deps");
     PRINT_TARGET_FIELD(target, compiler, "cc");
     PRINT_TARGET_FIELD(target, archiver, "ar");
     PRINT_TARGET_FIELD(target, cflags, "cflags");
@@ -706,7 +718,7 @@ static void dump_build_config(BuildConfig *build_config) {
     PRINT_TARGET_FIELD(target, arflags, "arflags");
     PRINT_TARGET_FIELD(target, incpath, "incpath");
 #ifndef _WIN32
-    _Static_assert (sizeof(Target) == 176, "Target structure configuration changed");
+    _Static_assert (sizeof(Target) == 192, "Target structure configuration changed");
 #endif
   }
 }
@@ -1120,6 +1132,7 @@ static TargetBuildInfo *get_target_build_info(BuildConfig *build_config, Target 
   info->cmd = expand_value(build_config, target->cmd);
   info->srcs_expanded = expand_value(build_config, target->src_pattern);
   info->deps_expanded = expand_value(build_config, target->deps_pattern);
+  info->ghost_deps_expanded = expand_value(build_config, target->ghost_deps_pattern);
   info->srcs = match_glob(info->srcs_expanded);
   info->compiler = expand_value(build_config, target->compiler);
   info->archiver = expand_value(build_config, target->archiver);
@@ -1132,7 +1145,7 @@ static TargetBuildInfo *get_target_build_info(BuildConfig *build_config, Target 
   info->build_result = BuildResultFail;
 
   for (u32 i = 0; i < info->srcs.len; ++i) {
-    Target *dep_target = NULL;
+    Dep dep = { NULL, false };
 
     Strs header_deps = parse_header_deps(info->srcs.items[i], info->cflags);
     DA_APPEND(info->header_deps, header_deps);
@@ -1146,33 +1159,52 @@ static TargetBuildInfo *get_target_build_info(BuildConfig *build_config, Target 
 
     for (u32 j = 0; j < build_config->targets.len; ++j) {
       if (str_eq(build_config->targets.items[j].file, info->srcs.items[i])) {
-        dep_target = build_config->targets.items + j;
+        dep.target = build_config->targets.items + j;
         break;
       }
     }
 
-    if (dep_target)
-      DA_APPEND(info->dep_targets, dep_target);
+    if (dep.target)
+      DA_APPEND(info->deps, dep);
   }
 
   Strs deps = split(info->deps_expanded, ' ');
 
   for (u32 i = 0; i < deps.len; ++i) {
-    Target *dep_target = NULL;
+    Dep dep = { NULL, false };
 
     for (u32 j = 0; j < build_config->targets.len; ++j) {
       if (str_eq(build_config->targets.items[j].file, deps.items[i])) {
-        dep_target = build_config->targets.items + j;
+        dep.target = build_config->targets.items + j;
         break;
       }
     }
 
-    if (dep_target)
-      DA_APPEND(info->dep_targets, dep_target);
+    if (dep.target)
+      DA_APPEND(info->deps, dep);
   }
 
   if (deps.items)
     free(deps.items);
+
+  Strs ghost_deps = split(info->ghost_deps_expanded, ' ');
+
+  for (u32 i = 0; i < ghost_deps.len; ++i) {
+    Dep dep = { NULL, true };
+
+    for (u32 j = 0; j < build_config->targets.len; ++j) {
+      if (str_eq(build_config->targets.items[j].file, ghost_deps.items[i])) {
+        dep.target = build_config->targets.items + j;
+        break;
+      }
+    }
+
+    if (dep.target)
+      DA_APPEND(info->deps, dep);
+  }
+
+  if (ghost_deps.items)
+    free(ghost_deps.items);
 
   return info;
 }
@@ -1296,9 +1328,9 @@ static bool needs_rebuild_many_srcs(Strs *srcs, Str dest) {
   return false;
 }
 
-static bool needs_rebuild_target_refs(TargetRefs *srcs, Str dest) {
-  for (u32 i = 0; i < srcs->len; ++i)
-    if (needs_rebuild(srcs->items[i]->info->file, dest))
+static bool needs_rebuild_deps(Deps *deps, Str dest) {
+  for (u32 i = 0; i < deps->len; ++i)
+    if (needs_rebuild(deps->items[i].target->info->file, dest))
       return true;
 
   return false;
@@ -1336,7 +1368,7 @@ static char *get_target_obj_build_cmd(TargetBuildInfo *info, u32 index) {
 }
 
 static char *get_inc_executable_target_build_cmd(TargetBuildInfo *info) {
-  if (!info->rebuild && !needs_rebuild_target_refs(&info->dep_targets, info->file))
+  if (!info->rebuild && !needs_rebuild_deps(&info->deps, info->file))
     return NULL;
 
   StringBuilder sb = {0};
@@ -1354,9 +1386,11 @@ static char *get_inc_executable_target_build_cmd(TargetBuildInfo *info) {
     sb_append_str(&sb, obj_path);
     free(obj_path.ptr);
   }
-  for (u32 i = 0; i < info->dep_targets.len; ++i) {
-    sb_append_char(&sb, ' ');
-    sb_append_str(&sb, info->dep_targets.items[i]->info->file);
+  for (u32 i = 0; i < info->deps.len; ++i) {
+    if (!info->deps.items[i].is_ghost) {
+      sb_append_char(&sb, ' ');
+      sb_append_str(&sb, info->deps.items[i].target->info->file);
+    }
   }
   if (info->ldflags.len > 0) {
     sb_append_char(&sb, ' ');
@@ -1371,7 +1405,7 @@ static char *get_full_executable_target_build_cmd(TargetBuildInfo *info) {
   if (!info->rebuild) {
     if (!needs_rebuild_many_srcs(&info->srcs, info->file))
       return NULL;
-    if (!needs_rebuild_target_refs(&info->dep_targets, info->file))
+    if (!needs_rebuild_deps(&info->deps, info->file))
       return NULL;
   }
 
@@ -1392,9 +1426,11 @@ static char *get_full_executable_target_build_cmd(TargetBuildInfo *info) {
     sb_append_char(&sb, ' ');
     sb_append_strs(&sb, &info->srcs);
   }
-  for (u32 i = 0; i < info->dep_targets.len; ++i) {
-    sb_append_char(&sb, ' ');
-    sb_append_str(&sb, info->dep_targets.items[i]->info->file);
+  for (u32 i = 0; i < info->deps.len; ++i) {
+    if (!info->deps.items[i].is_ghost) {
+      sb_append_char(&sb, ' ');
+      sb_append_str(&sb, info->deps.items[i].target->info->file);
+    }
   }
   if (info->ldflags.len > 0) {
     sb_append_char(&sb, ' ');
@@ -1440,7 +1476,7 @@ static char *get_static_lib_target_build_cmd(TargetBuildInfo *info) {
 }
 
 static char *get_inc_shared_lib_target_build_cmd(TargetBuildInfo *info) {
-  if (!info->rebuild && !needs_rebuild_target_refs(&info->dep_targets, info->file))
+  if (!info->rebuild && !needs_rebuild_deps(&info->deps, info->file))
     return NULL;
 
   Strs obj_paths = {0};
@@ -1461,9 +1497,11 @@ static char *get_inc_shared_lib_target_build_cmd(TargetBuildInfo *info) {
   sb_append_str(&sb, choose_compiler_shared_lib_output_prefix());
   sb_append_str(&sb, info->file);
   sb_append_strs(&sb, &obj_paths);
-  for (u32 i = 0; i < info->dep_targets.len; ++i) {
-    sb_append_char(&sb, ' ');
-    sb_append_str(&sb, info->dep_targets.items[i]->info->file);
+  for (u32 i = 0; i < info->deps.len; ++i) {
+    if (!info->deps.items[i].is_ghost) {
+      sb_append_char(&sb, ' ');
+      sb_append_str(&sb, info->deps.items[i].target->info->file);
+    }
   }
   if (info->ldflags.len > 0) {
     sb_append_char(&sb, ' ');
@@ -1483,7 +1521,7 @@ static char *get_full_shared_lib_target_build_cmd(TargetBuildInfo *info) {
   if (!info->rebuild) {
     if (!needs_rebuild_many_srcs(&info->srcs, info->file))
       return NULL;
-    if (!needs_rebuild_target_refs(&info->dep_targets, info->file))
+    if (!needs_rebuild_deps(&info->deps, info->file))
       return NULL;
   }
 
@@ -1500,9 +1538,11 @@ static char *get_full_shared_lib_target_build_cmd(TargetBuildInfo *info) {
     sb_append_char(&sb, ' ');
     sb_append_strs(&sb, &info->srcs);
   }
-  for (u32 i = 0; i < info->dep_targets.len; ++i) {
-    sb_append_char(&sb, ' ');
-    sb_append_str(&sb, info->dep_targets.items[i]->info->file);
+  for (u32 i = 0; i < info->deps.len; ++i) {
+    if (!info->deps.items[i].is_ghost) {
+      sb_append_char(&sb, ' ');
+      sb_append_str(&sb, info->deps.items[i].target->info->file);
+    }
   }
   if (info->ldflags.len > 0) {
     sb_append_char(&sb, ' ');
@@ -1548,8 +1588,8 @@ static BuildResult build(BuildConfig *build_config, Target *target) {
   if (info->build_result != BuildResultFail)
     return info->build_result;
 
-  for (u32 i = 0; i < info->dep_targets.len; ++i) {
-    BuildResult result = build(build_config, info->dep_targets.items[i]);
+  for (u32 i = 0; i < info->deps.len; ++i) {
+    BuildResult result = build(build_config, info->deps.items[i].target);
     if (result == BuildResultFail)
       return BuildResultFail;
     if (result == BuildResultOk)
