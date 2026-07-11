@@ -1628,21 +1628,21 @@ static BuildResult build(BuildConfig *build_config, Target *target) {
       info->rebuild = true;
     }
 
+    bool failed = false;
     for (u32 i = 0; i < src_build_cmds.len; ++i) {
       if (config.verbose)
         printf("[INFO] Running %s\n", src_build_cmds.items[i]);
       int result = system(src_build_cmds.items[i]);
       free(src_build_cmds.items[i]);
-      if (result != 0) {
-        for (u32 j = i + 1; j < src_build_cmds.len; ++j)
-          free(src_build_cmds.items[j]);
-        free(src_build_cmds.items);
-        return BuildResultFail;
-      }
+      if (result != 0)
+        failed = true;
     }
 
     if (src_build_cmds.items)
       free(src_build_cmds.items);
+
+    if (failed)
+      return BuildResultFail;
   } else if (info->type == TypeCustom && info->srcs.len > 0) {
     for (u32 i = 0; i < info->srcs.len; ++i) {
       if (needs_rebuild(info->srcs.items[i], info->file)) {
