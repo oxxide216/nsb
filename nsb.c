@@ -1376,6 +1376,7 @@ static char *get_inc_executable_target_build_cmd(TargetBuildInfo *info) {
   sb_append_str(&sb, choose_compiler_executable_output_prefix());
   if (get_quote_output_file())
     sb_append_char(&sb, '"');
+  make_directory(info->file, true);
   sb_append_str(&sb, info->file);
   if (get_quote_output_file())
     sb_append_char(&sb, '"');
@@ -1411,6 +1412,11 @@ static char *get_full_executable_target_build_cmd(TargetBuildInfo *info) {
   StringBuilder sb = {0};
   sb_append_str(&sb, info->compiler);
   sb_append_char(&sb, ' ');
+  u32 saved_len = sb.len;
+  sb_append_str(&sb, choose_compiler_executable_output_prefix());
+  sb_append_str(&sb, info->file);
+  make_directory((Str) { sb.items + saved_len, sb.len - saved_len }, true);
+  sb.len = saved_len;
   sb_append_str(&sb, choose_compiler_executable_output_prefix());
   if (get_quote_output_file())
     sb_append_char(&sb, '"');
@@ -1461,8 +1467,10 @@ static char *get_static_lib_target_build_cmd(TargetBuildInfo *info) {
     sb_append_str(&sb, info->arflags);
   }
   sb_append_char(&sb, ' ');
+  u32 saved_len = sb.len;
   sb_append_str(&sb, choose_archiver_output_prefix());
   sb_append_str(&sb, info->file);
+  make_directory((Str) { sb.items + saved_len, sb.len - saved_len }, true);
   sb_append_strs(&sb, &obj_paths);
   sb_append_char(&sb, '\0');
 
@@ -1493,8 +1501,11 @@ static char *get_inc_shared_lib_target_build_cmd(TargetBuildInfo *info) {
 
   StringBuilder sb = {0};
   sb_append_str(&sb, info->compiler);
+  sb_append_char(&sb, ' ');
+  u32 saved_len = sb.len;
   sb_append_str(&sb, choose_compiler_shared_lib_output_prefix());
   sb_append_str(&sb, info->file);
+  make_directory((Str) { sb.items + saved_len, sb.len - saved_len }, true);
   sb_append_strs(&sb, &obj_paths);
   for (u32 i = 0; i < info->deps.len; ++i) {
     if (!info->deps.items[i].is_ghost) {
@@ -1527,8 +1538,10 @@ static char *get_full_shared_lib_target_build_cmd(TargetBuildInfo *info) {
   StringBuilder sb = {0};
   sb_append_str(&sb, info->compiler);
   sb_append_char(&sb, ' ');
+  u32 saved_len = sb.len;
   sb_append_str(&sb, choose_compiler_shared_lib_output_prefix());
   sb_append_str(&sb, info->file);
+  make_directory((Str) { sb.items + saved_len, sb.len - saved_len }, true);
   if (info->cflags.len > 0) {
     sb_append_char(&sb, ' ');
     sb_append_str(&sb, info->cflags);
