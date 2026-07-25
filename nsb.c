@@ -1174,10 +1174,13 @@ static TargetBuildInfo *get_target_build_info(BuildConfig *build_config, Target 
     Dep dep = { NULL, false };
 
     for (u32 j = 0; j < build_config->targets.len; ++j) {
+      Str target_file = expand_value(build_config, build_config->targets.items[j].file);
       if (str_eq(build_config->targets.items[j].file, deps.items[i])) {
         dep.target = build_config->targets.items + j;
+        free(target_file.ptr);
         break;
       }
+      free(target_file.ptr);
     }
 
     if (dep.target)
@@ -1193,10 +1196,13 @@ static TargetBuildInfo *get_target_build_info(BuildConfig *build_config, Target 
     Dep dep = { NULL, true };
 
     for (u32 j = 0; j < build_config->targets.len; ++j) {
-      if (str_eq(build_config->targets.items[j].file, ghost_deps.items[i])) {
+      Str target_file = expand_value(build_config, build_config->targets.items[j].file);
+      if (str_eq(target_file, ghost_deps.items[i])) {
         dep.target = build_config->targets.items + j;
+        free(target_file.ptr);
         break;
       }
+      free(target_file.ptr);
     }
 
     if (dep.target)
@@ -1446,18 +1452,12 @@ static char *get_full_executable_target_build_cmd(TargetBuildInfo *info) {
 }
 
 static char *get_static_lib_target_build_cmd(TargetBuildInfo *info) {
+  if (!info->rebuild && !needs_rebuild_deps(&info->deps, info->file))
+    return NULL;
+
   Strs obj_paths = {0};
   for (u32 i = 0; i < info->srcs.len; ++i)
     DA_APPEND(obj_paths, src_to_obj_path(info, info->srcs.items[i]));
-
-  if (!info->rebuild && !needs_rebuild_many_srcs(&obj_paths, info->file)) {
-    for (u32 i = 0; i < obj_paths.len; ++i)
-      free(obj_paths.items[i].ptr);
-    if (obj_paths.items)
-      free(obj_paths.items);
-
-    return NULL;
-  }
 
   make_directory(info->file, true);
 
@@ -1680,6 +1680,7 @@ static BuildResult build(BuildConfig *build_config, Target *target) {
   } else if (info->type == TypeCustom) {
     cmd = get_custom_target_build_cmd(info);
   }
+
   if (!cmd) {
     info->build_result = BuildResultUpToDate;
     return BuildResultUpToDate;
