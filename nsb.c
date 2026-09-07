@@ -3,7 +3,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
-// TODO: Windows support
 #ifdef _WIN32
 #include <Windows.h>
 #else
@@ -129,6 +128,8 @@ typedef struct TargetBuildInfo TargetBuildInfo;
 typedef struct {
   Str              file;
   Type             type;
+  Type             name_type;
+  bool             is_name_type_explicit;
   Str              cmd;
   Str              src_pattern;
   Str              deps_pattern;
@@ -535,15 +536,17 @@ static bool parse_target(Parser *parser) {
     }
     skip_whitespace(parser);
 
-    if (str_eq(name, STR_LIT("type"))) {
+    if (str_eq(name, STR_LIT("type")) || str_eq(name, STR_LIT("name_type"))) {
+      Type type;
+
       if (str_eq(value, STR_LIT("executable"))) {
-        target.type = TypeExecutable;
+        type = TypeExecutable;
       } else if (str_eq(value, STR_LIT("static_lib"))) {
-        target.type = TypeStaticLib;
+        type = TypeStaticLib;
       } else if (str_eq(value, STR_LIT("shared_lib"))) {
-        target.type = TypeSharedLib;
+        type = TypeSharedLib;
       } else if (str_eq(value, STR_LIT("custom"))) {
-        target.type = TypeCustom;
+        type = TypeCustom;
       } else {
         parser->row = value_row;
         parser->col = value_col;
@@ -554,6 +557,15 @@ static bool parse_target(Parser *parser) {
         fprintf(stderr, "    static_lib\n");
         fprintf(stderr, "    shared_lib\n");
         return false;
+      }
+
+      if (str_eq(name, STR_LIT("type"))) {
+        target.type = type;
+        if (!target.is_name_type_explicit)
+          target.name_type = type;
+      } else {
+        target.name_type = type;
+        target.is_name_type_explicit = true;
       }
     } else if (str_eq(name, STR_LIT("cmd"))) {
       target.cmd = value;
@@ -583,7 +595,7 @@ static bool parse_target(Parser *parser) {
       return false;
     }
 #ifndef _WIN32
-    _Static_assert (sizeof(Target) == 192, "Target structure configuration changed");
+    _Static_assert (sizeof(Target) == 200, "Target structure configuration changed");
 #endif
   }
 
@@ -707,6 +719,7 @@ static void dump_build_config(BuildConfig *build_config) {
     Target *target = build_config->targets.items + i;
     printf("[%.*s]\n", target->file.len, target->file.ptr);
     printf("type = %s\n", get_target_type_str(target->type));
+    printf("name_type = %s\n", get_target_type_str(target->name_type));
     PRINT_TARGET_FIELD(target, cmd, "cmd");
     PRINT_TARGET_FIELD(target, src_pattern, "src");
     PRINT_TARGET_FIELD(target, deps_pattern, "deps");
@@ -718,7 +731,7 @@ static void dump_build_config(BuildConfig *build_config) {
     PRINT_TARGET_FIELD(target, arflags, "arflags");
     PRINT_TARGET_FIELD(target, incpath, "incpath");
 #ifndef _WIN32
-    _Static_assert (sizeof(Target) == 192, "Target structure configuration changed");
+    _Static_assert (sizeof(Target) == 200, "Target structure configuration changed");
 #endif
   }
 }
@@ -1000,7 +1013,7 @@ static Strs split(Str str, char sep) {
   }
 
   if (anchor < str.len) {
-    Str part = { str.ptr + anchor, str.len };
+    Str part = { str.ptr + anchor, str.len - anchor };
     DA_APPEND(result, part);
   }
 
@@ -1137,7 +1150,7 @@ static TargetBuildInfo *get_target_build_info(BuildConfig *build_config, Target 
   TargetBuildInfo *info = malloc(sizeof(TargetBuildInfo));
   memset(info, 0, sizeof(TargetBuildInfo));
   Str file_expanded = expand_value(build_config, target->file);
-  info->file = get_target_full_file(file_expanded, target->type);
+  info->file = get_target_full_file(file_expanded, target->name_type);
   free(file_expanded.ptr);
   info->type = target->type;
   info->cmd = expand_value(build_config, target->cmd);
