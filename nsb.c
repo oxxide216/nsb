@@ -1597,6 +1597,8 @@ static char *get_custom_target_build_cmd(TargetBuildInfo *info) {
       return NULL;
   }
 
+  make_directory(info->file, true);
+
   StringBuilder sb = {0};
   sb_append_str(&sb, info->cmd);
   sb_append_char(&sb, '\0');
