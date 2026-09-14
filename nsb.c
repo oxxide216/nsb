@@ -1437,12 +1437,10 @@ static char *get_inc_executable_target_build_cmd(TargetBuildInfo *info) {
 }
 
 static char *get_full_executable_target_build_cmd(TargetBuildInfo *info) {
-  if (!info->rebuild) {
-    if (!needs_rebuild_many_srcs(&info->srcs, info->file))
-      return NULL;
-    if (!needs_rebuild_deps(&info->deps, info->file))
-      return NULL;
-  }
+  if (!info->rebuild &&
+      !needs_rebuild_many_srcs(&info->srcs, info->file) &&
+      !needs_rebuild_deps(&info->deps, info->file))
+    return NULL;
 
   make_directory(info->file, true);
 
