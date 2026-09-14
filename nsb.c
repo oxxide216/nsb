@@ -1182,10 +1182,13 @@ static TargetBuildInfo *get_target_build_info(BuildConfig *build_config, Target 
     }
 
     for (u32 j = 0; j < build_config->targets.len; ++j) {
-      if (str_eq(build_config->targets.items[j].file, info->srcs.items[i])) {
+      Str target_file = expand_value(build_config, build_config->targets.items[j].file);
+      if (str_eq(target_file, info->srcs.items[i])) {
         dep.target = build_config->targets.items + j;
+        free(target_file.ptr);
         break;
       }
+      free(target_file.ptr);
     }
 
     if (dep.target)
@@ -1199,7 +1202,7 @@ static TargetBuildInfo *get_target_build_info(BuildConfig *build_config, Target 
 
     for (u32 j = 0; j < build_config->targets.len; ++j) {
       Str target_file = expand_value(build_config, build_config->targets.items[j].file);
-      if (str_eq(build_config->targets.items[j].file, deps.items[i])) {
+      if (str_eq(target_file, deps.items[i])) {
         dep.target = build_config->targets.items + j;
         free(target_file.ptr);
         break;
