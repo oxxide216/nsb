@@ -343,6 +343,14 @@ static void skip_whitespace(Parser *parser) {
   }
 }
 
+static void skip_whitespace_no_newline(Parser *parser) {
+  while (parser->current < parser->content.len &&
+         isspace(*CUR(parser)) && *CUR(parser) != '\n') {
+    ++parser->col;
+    ++parser->current;
+  }
+}
+
 static void unexpected_error(Parser *parser) {
   if (parser->current >= parser->content.len)
     PARSE_ERROR(parser, "Unexpected EOF\n");
@@ -374,7 +382,7 @@ static bool parse_var_def(Parser *parser) {
     return false;
   ++parser->current;
   ++parser->col;
-  skip_whitespace(parser);
+  skip_whitespace_no_newline(parser);
   var.value = parse_until(parser, '\n');
   if (parser->current < parser->content.len) {
     ++parser->current;
@@ -525,7 +533,7 @@ static bool parse_target(Parser *parser) {
       return false;
     ++parser->current;
     ++parser->col;
-    skip_whitespace(parser);
+    skip_whitespace_no_newline(parser);
     u32 value_row = parser->row;
     u32 value_col = parser->col;
     Str value = parse_until(parser, '\n');
@@ -755,8 +763,8 @@ static Str expand_value(BuildConfig *build_config, Str value) {
 
       for (u32 j = build_config->vars.len; j > 0; --j) {
         if (str_eq(build_config->vars.items[j - 1].name, target_var)) {
-          Str target_value =
-            expand_value(build_config, build_config->vars.items[j - 1].value);
+          Str value = build_config->vars.items[j - 1].value;
+          Str target_value = expand_value(build_config, value);
           DA_APPEND_MANY(sb, target_value.ptr, target_value.len);
           free(target_value.ptr);
           break;
