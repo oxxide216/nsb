@@ -239,7 +239,7 @@ static bool parse_args(u32 argc, char **argv) {
       printf("[ERROR] Unknown flag: %s\n", argv[i]);
       return false;
     } else {
-      config.build_file_dir = argv[1];
+      config.build_file_dir = argv[i];
     }
   }
 
