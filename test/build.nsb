@@ -4,8 +4,13 @@ build_dir = build
 [test]
 src = src/*.c
 deps = lib
+ghost_deps = $build_dir/name.c
 cflags = $cflags
 incpath = $build_dir
+
+[$build_dir/name.c]
+type = bundle
+src = name.txt
 
 [lib]
 type = static_lib
