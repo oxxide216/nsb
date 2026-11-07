@@ -1688,7 +1688,7 @@ static u32 copy_file_as_c(char *src_path, FILE *dest) {
       break;
   }
 
-  fprintf(dest, "\n};\n\nunsigned int %s_len = %u;", name, size);
+  fprintf(dest, "\n};\nunsigned int %s_len = %u;", name, size);
 
   fclose(src);
 
@@ -1817,6 +1817,8 @@ static BuildResult build(BuildConfig *build_config, Target *target) {
       if (copy_file_as_c(path, file) == (u32) -1)
         return BuildResultFail;
     }
+
+    fputc('\n', file);
 
     fclose(file);
   } break;
